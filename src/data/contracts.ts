@@ -1,0 +1,472 @@
+import { TradeableContract } from '../types';
+
+export const TRADEABLE_CONTRACTS: TradeableContract[] = [
+  // NIFTY OPTIONS (Spot ~24550-24600, ATM +- 2 Strikes: 24450 to 24700, Lot Size: 65)
+  {
+    symbol: 'NIFTY26AUG24450CE',
+    tradingsymbol: 'NIFTY26AUG24450CE',
+    exchange: 'NFO',
+    category: 'NIFTY_FNO',
+    lotSize: 65,
+    lastPrice: 172.50,
+    strikePrice: 24450,
+    optionType: 'CE',
+    expiry: '27-AUG-2026',
+    moneyness: 'ITM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'NIFTY26AUG24500CE',
+    tradingsymbol: 'NIFTY26AUG24500CE',
+    exchange: 'NFO',
+    category: 'NIFTY_FNO',
+    lotSize: 65,
+    lastPrice: 142.50,
+    strikePrice: 24500,
+    optionType: 'CE',
+    expiry: '27-AUG-2026',
+    moneyness: 'ITM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'NIFTY26AUG24550CE',
+    tradingsymbol: 'NIFTY26AUG24550CE',
+    exchange: 'NFO',
+    category: 'NIFTY_FNO',
+    lotSize: 65,
+    lastPrice: 118.00,
+    strikePrice: 24550,
+    optionType: 'CE',
+    expiry: '27-AUG-2026',
+    moneyness: 'ATM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'NIFTY26AUG24600CE',
+    tradingsymbol: 'NIFTY26AUG24600CE',
+    exchange: 'NFO',
+    category: 'NIFTY_FNO',
+    lotSize: 65,
+    lastPrice: 42.50,
+    strikePrice: 24600,
+    optionType: 'CE',
+    expiry: '27-AUG-2026',
+    moneyness: 'ATM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'NIFTY26AUG24650CE',
+    tradingsymbol: 'NIFTY26AUG24650CE',
+    exchange: 'NFO',
+    category: 'NIFTY_FNO',
+    lotSize: 65,
+    lastPrice: 18.20,
+    strikePrice: 24650,
+    optionType: 'CE',
+    expiry: '27-AUG-2026',
+    moneyness: 'OTM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'NIFTY26AUG24700CE',
+    tradingsymbol: 'NIFTY26AUG24700CE',
+    exchange: 'NFO',
+    category: 'NIFTY_FNO',
+    lotSize: 65,
+    lastPrice: 6.80,
+    strikePrice: 24700,
+    optionType: 'CE',
+    expiry: '27-AUG-2026',
+    moneyness: 'OTM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'NIFTY26AUG24450PE',
+    tradingsymbol: 'NIFTY26AUG24450PE',
+    exchange: 'NFO',
+    category: 'NIFTY_FNO',
+    lotSize: 65,
+    lastPrice: 16.40,
+    strikePrice: 24450,
+    optionType: 'PE',
+    expiry: '27-AUG-2026',
+    moneyness: 'OTM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'NIFTY26AUG24500PE',
+    tradingsymbol: 'NIFTY26AUG24500PE',
+    exchange: 'NFO',
+    category: 'NIFTY_FNO',
+    lotSize: 65,
+    lastPrice: 38.20,
+    strikePrice: 24500,
+    optionType: 'PE',
+    expiry: '27-AUG-2026',
+    moneyness: 'OTM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'NIFTY26AUG24550PE',
+    tradingsymbol: 'NIFTY26AUG24550PE',
+    exchange: 'NFO',
+    category: 'NIFTY_FNO',
+    lotSize: 65,
+    lastPrice: 58.60,
+    strikePrice: 24550,
+    optionType: 'PE',
+    expiry: '27-AUG-2026',
+    moneyness: 'ATM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'NIFTY26AUG24600PE',
+    tradingsymbol: 'NIFTY26AUG24600PE',
+    exchange: 'NFO',
+    category: 'NIFTY_FNO',
+    lotSize: 65,
+    lastPrice: 86.40,
+    strikePrice: 24600,
+    optionType: 'PE',
+    expiry: '27-AUG-2026',
+    moneyness: 'ITM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'NIFTY26AUG24650PE',
+    tradingsymbol: 'NIFTY26AUG24650PE',
+    exchange: 'NFO',
+    category: 'NIFTY_FNO',
+    lotSize: 65,
+    lastPrice: 122.50,
+    strikePrice: 24650,
+    optionType: 'PE',
+    expiry: '27-AUG-2026',
+    moneyness: 'ITM',
+    isAtmNearStrike: true
+  },
+
+  // BANKNIFTY OPTIONS (Spot ~52000, ATM +- 2 Strikes: 51600 to 52400, Lot Size: 15)
+  {
+    symbol: 'BANKNIFTY26AUG51600CE',
+    tradingsymbol: 'BANKNIFTY26AUG51600CE',
+    exchange: 'NFO',
+    category: 'BANKNIFTY_FNO',
+    lotSize: 15,
+    lastPrice: 395.00,
+    strikePrice: 51600,
+    optionType: 'CE',
+    expiry: '27-AUG-2026',
+    moneyness: 'ITM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'BANKNIFTY26AUG51800CE',
+    tradingsymbol: 'BANKNIFTY26AUG51800CE',
+    exchange: 'NFO',
+    category: 'BANKNIFTY_FNO',
+    lotSize: 15,
+    lastPrice: 320.50,
+    strikePrice: 51800,
+    optionType: 'CE',
+    expiry: '27-AUG-2026',
+    moneyness: 'ITM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'BANKNIFTY26AUG52000CE',
+    tradingsymbol: 'BANKNIFTY26AUG52000CE',
+    exchange: 'NFO',
+    category: 'BANKNIFTY_FNO',
+    lotSize: 15,
+    lastPrice: 265.00,
+    strikePrice: 52000,
+    optionType: 'CE',
+    expiry: '27-AUG-2026',
+    moneyness: 'ATM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'BANKNIFTY26AUG52200CE',
+    tradingsymbol: 'BANKNIFTY26AUG52200CE',
+    exchange: 'NFO',
+    category: 'BANKNIFTY_FNO',
+    lotSize: 15,
+    lastPrice: 185.00,
+    strikePrice: 52200,
+    optionType: 'CE',
+    expiry: '27-AUG-2026',
+    moneyness: 'OTM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'BANKNIFTY26AUG52400CE',
+    tradingsymbol: 'BANKNIFTY26AUG52400CE',
+    exchange: 'NFO',
+    category: 'BANKNIFTY_FNO',
+    lotSize: 15,
+    lastPrice: 125.40,
+    strikePrice: 52400,
+    optionType: 'CE',
+    expiry: '27-AUG-2026',
+    moneyness: 'OTM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'BANKNIFTY26AUG51600PE',
+    tradingsymbol: 'BANKNIFTY26AUG51600PE',
+    exchange: 'NFO',
+    category: 'BANKNIFTY_FNO',
+    lotSize: 15,
+    lastPrice: 140.00,
+    strikePrice: 51600,
+    optionType: 'PE',
+    expiry: '27-AUG-2026',
+    moneyness: 'OTM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'BANKNIFTY26AUG51800PE',
+    tradingsymbol: 'BANKNIFTY26AUG51800PE',
+    exchange: 'NFO',
+    category: 'BANKNIFTY_FNO',
+    lotSize: 15,
+    lastPrice: 205.50,
+    strikePrice: 51800,
+    optionType: 'PE',
+    expiry: '27-AUG-2026',
+    moneyness: 'OTM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'BANKNIFTY26AUG52000PE',
+    tradingsymbol: 'BANKNIFTY26AUG52000PE',
+    exchange: 'NFO',
+    category: 'BANKNIFTY_FNO',
+    lotSize: 15,
+    lastPrice: 285.00,
+    strikePrice: 52000,
+    optionType: 'PE',
+    expiry: '27-AUG-2026',
+    moneyness: 'ATM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'BANKNIFTY26AUG52200PE',
+    tradingsymbol: 'BANKNIFTY26AUG52200PE',
+    exchange: 'NFO',
+    category: 'BANKNIFTY_FNO',
+    lotSize: 15,
+    lastPrice: 380.00,
+    strikePrice: 52200,
+    optionType: 'PE',
+    expiry: '27-AUG-2026',
+    moneyness: 'ITM',
+    isAtmNearStrike: true
+  },
+
+  // FINNIFTY OPTIONS (Spot ~23500, ATM +- 2 Strikes: 23300 to 23700, Lot Size: 40)
+  {
+    symbol: 'FINNIFTY26AUG23400CE',
+    tradingsymbol: 'FINNIFTY26AUG23400CE',
+    exchange: 'NFO',
+    category: 'FINNIFTY_FNO',
+    lotSize: 40,
+    lastPrice: 118.00,
+    strikePrice: 23400,
+    optionType: 'CE',
+    expiry: '27-AUG-2026',
+    moneyness: 'ITM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'FINNIFTY26AUG23500CE',
+    tradingsymbol: 'FINNIFTY26AUG23500CE',
+    exchange: 'NFO',
+    category: 'FINNIFTY_FNO',
+    lotSize: 40,
+    lastPrice: 85.00,
+    strikePrice: 23500,
+    optionType: 'CE',
+    expiry: '27-AUG-2026',
+    moneyness: 'ATM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'FINNIFTY26AUG23600CE',
+    tradingsymbol: 'FINNIFTY26AUG23600CE',
+    exchange: 'NFO',
+    category: 'FINNIFTY_FNO',
+    lotSize: 40,
+    lastPrice: 54.20,
+    strikePrice: 23600,
+    optionType: 'CE',
+    expiry: '27-AUG-2026',
+    moneyness: 'OTM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'FINNIFTY26AUG23400PE',
+    tradingsymbol: 'FINNIFTY26AUG23400PE',
+    exchange: 'NFO',
+    category: 'FINNIFTY_FNO',
+    lotSize: 40,
+    lastPrice: 68.50,
+    strikePrice: 23400,
+    optionType: 'PE',
+    expiry: '27-AUG-2026',
+    moneyness: 'OTM',
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'FINNIFTY26AUG23500PE',
+    tradingsymbol: 'FINNIFTY26AUG23500PE',
+    exchange: 'NFO',
+    category: 'FINNIFTY_FNO',
+    lotSize: 40,
+    lastPrice: 98.40,
+    strikePrice: 23500,
+    optionType: 'PE',
+    expiry: '27-AUG-2026',
+    moneyness: 'ATM',
+    isAtmNearStrike: true
+  },
+
+  // HIGH LIQUIDITY EQUITIES (NSE)
+  {
+    symbol: 'RELIANCE',
+    tradingsymbol: 'RELIANCE',
+    exchange: 'NSE',
+    category: 'EQUITY_INTRADAY',
+    lotSize: 1,
+    lastPrice: 2985.40,
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'HDFCBANK',
+    tradingsymbol: 'HDFCBANK',
+    exchange: 'NSE',
+    category: 'EQUITY_INTRADAY',
+    lotSize: 1,
+    lastPrice: 1460.20,
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'ICICIBANK',
+    tradingsymbol: 'ICICIBANK',
+    exchange: 'NSE',
+    category: 'EQUITY_INTRADAY',
+    lotSize: 1,
+    lastPrice: 1082.10,
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'TCS',
+    tradingsymbol: 'TCS',
+    exchange: 'NSE',
+    category: 'EQUITY_INTRADAY',
+    lotSize: 1,
+    lastPrice: 3912.80,
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'INFY',
+    tradingsymbol: 'INFY',
+    exchange: 'NSE',
+    category: 'EQUITY_INTRADAY',
+    lotSize: 1,
+    lastPrice: 1540.30,
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'SBIN',
+    tradingsymbol: 'SBIN',
+    exchange: 'NSE',
+    category: 'EQUITY_INTRADAY',
+    lotSize: 1,
+    lastPrice: 825.00,
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'BHARTIARTL',
+    tradingsymbol: 'BHARTIARTL',
+    exchange: 'NSE',
+    category: 'EQUITY_INTRADAY',
+    lotSize: 1,
+    lastPrice: 1420.50,
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'LT',
+    tradingsymbol: 'LT',
+    exchange: 'NSE',
+    category: 'EQUITY_INTRADAY',
+    lotSize: 1,
+    lastPrice: 3640.00,
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'AXISBANK',
+    tradingsymbol: 'AXISBANK',
+    exchange: 'NSE',
+    category: 'EQUITY_INTRADAY',
+    lotSize: 1,
+    lastPrice: 1165.75,
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'KOTAKBANK',
+    tradingsymbol: 'KOTAKBANK',
+    exchange: 'NSE',
+    category: 'EQUITY_INTRADAY',
+    lotSize: 1,
+    lastPrice: 1780.30,
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'TATAMOTORS',
+    tradingsymbol: 'TATAMOTORS',
+    exchange: 'NSE',
+    category: 'EQUITY_INTRADAY',
+    lotSize: 1,
+    lastPrice: 1015.40,
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'MARUTI',
+    tradingsymbol: 'MARUTI',
+    exchange: 'NSE',
+    category: 'EQUITY_INTRADAY',
+    lotSize: 1,
+    lastPrice: 12450.00,
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'ITC',
+    tradingsymbol: 'ITC',
+    exchange: 'NSE',
+    category: 'EQUITY_INTRADAY',
+    lotSize: 1,
+    lastPrice: 485.60,
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'SUNPHARMA',
+    tradingsymbol: 'SUNPHARMA',
+    exchange: 'NSE',
+    category: 'EQUITY_INTRADAY',
+    lotSize: 1,
+    lastPrice: 1710.20,
+    isAtmNearStrike: true
+  },
+  {
+    symbol: 'BAJFINANCE',
+    tradingsymbol: 'BAJFINANCE',
+    exchange: 'NSE',
+    category: 'EQUITY_INTRADAY',
+    lotSize: 1,
+    lastPrice: 6850.00,
+    isAtmNearStrike: true
+  }
+];
+
