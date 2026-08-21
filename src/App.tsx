@@ -25,8 +25,9 @@ import { ExecutionLogs } from './components/ExecutionLogs';
 import { LiveTickerBar } from './components/LiveTickerBar';
 import { TradingPerformanceSummary } from './components/TradingPerformanceSummary';
 import { ToastContainer, ToastNotification } from './components/ToastContainer';
-import { TRADEABLE_CONTRACTS } from './data/contracts';
-import { Zap, Brain, Layers, AlertOctagon, RefreshCw, Home, ShieldAlert, CheckCircle2, ShieldCheck, Sparkles } from 'lucide-react';
+import { EdgeEngineDashboard } from './components/EdgeEngineDashboard';
+import { getDynamicTradeableContracts, DEFAULT_UNDERLYING_SPOTS } from './data/contracts';
+import { Zap, Brain, Layers, AlertOctagon, RefreshCw, Home, ShieldAlert, CheckCircle2, ShieldCheck, Sparkles, Scale } from 'lucide-react';
 
 export default function App() {
   // Zerodha API Credentials State
@@ -117,6 +118,7 @@ export default function App() {
   const [isAutoTraderConfirmOpen, setIsAutoTraderConfirmOpen] = useState<boolean>(false);
   const [isEmergencyStopOpen, setIsEmergencyStopOpen] = useState<boolean>(false);
   const [autoTradingCapital, setAutoTradingCapital] = useState<number>(100000); // ₹1,00,000 Allocation
+  const [showEdgeEngine, setShowEdgeEngine] = useState<boolean>(true);
 
   // Positions and Order History State (with Local Storage Persistence)
   const [positions, setPositions] = useState<ActivePosition[]>(() => {
@@ -248,10 +250,11 @@ export default function App() {
   const handleFetchLiveQuotes = async (isAuto: boolean = false) => {
     if (!isAuto) setIsFetchingQuotes(true);
     try {
+      const dynamicUniverse = getDynamicTradeableContracts(spotIndices);
       const symbolsToFetch = Array.from(
         new Set([
-          ...TRADEABLE_CONTRACTS.map((c) => c.tradingsymbol),
-          ...TRADEABLE_CONTRACTS.map((c) => c.symbol),
+          ...dynamicUniverse.map((c) => c.tradingsymbol),
+          ...dynamicUniverse.map((c) => c.symbol),
           ...positions.map((p) => p.tradingsymbol),
           ...positions.map((p) => p.symbol)
         ])
@@ -990,6 +993,27 @@ export default function App() {
             <span>{isAutoTrading ? '🤖 AUTO-TRADING ON (SELECTIVE PROFIT ONLY)' : '🤖 START AUTO-TRADER'}</span>
           </button>
 
+          {/* GoldenGate Edge Engine Toggle Button */}
+          <button
+            onClick={() => {
+              setShowEdgeEngine((prev) => !prev);
+              triggerUserFeedback(
+                !showEdgeEngine
+                  ? 'Expanded GoldenGate Profitability & Edge Engine Dashboard'
+                  : 'Minimized Edge Engine Dashboard'
+              );
+            }}
+            className={`flex items-center space-x-1.5 font-black px-3 py-1.5 rounded text-[10.5px] sm:text-[11px] shadow border transition-all uppercase tracking-wider active:scale-95 ${
+              showEdgeEngine
+                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border-emerald-300 ring-1 ring-emerald-400/40'
+                : 'bg-gray-800 hover:bg-gray-700 text-gray-200 border-gray-600'
+            }`}
+          >
+            <Scale className="w-3.5 h-3.5 text-amber-300" />
+            <span className="hidden sm:inline">⚡ EDGE ENGINE & MATCHER</span>
+            <span className="sm:hidden">⚡ EDGE</span>
+          </button>
+
           {/* Quant Memory & Journal Modal Button */}
           <button
             onClick={() => {
@@ -1067,6 +1091,12 @@ export default function App() {
         {/* Quick Select Ribbon */}
         <QuickSelectRibbon
           selectedContractSymbol={selectedContractSymbol}
+          liveQuotes={quotes}
+          spotIndices={spotIndices}
+          liveSignals={liveSignals}
+          isConnected={zerodhaCreds.isConnected}
+          onRefreshQuotes={() => handleFetchLiveQuotes(false)}
+          isFetchingQuotes={isFetchingQuotes}
           onSelectContract={(sym) => {
             setSelectedContractSymbol(sym);
             const dynamicSig = getOrCreateSignalForSymbol(sym, liveSignals);
@@ -1080,7 +1110,7 @@ export default function App() {
 
         {/* Step 2: Contract Catalog */}
         <ContractCatalog
-          contracts={TRADEABLE_CONTRACTS}
+          contracts={getDynamicTradeableContracts(spotIndices)}
           onScanSignalsForContract={(symbol, cat) => handleAiReadSignals(symbol, cat)}
           isScanning={isAiScanning}
           selectedContractSymbol={selectedContractSymbol}
@@ -1095,6 +1125,23 @@ export default function App() {
           isFetchingQuotes={isFetchingQuotes}
           onUserActionFeedback={triggerUserFeedback}
         />
+
+        {/* GoldenGate Edge Engine & Historical Matcher Dashboard */}
+        {showEdgeEngine && (
+          <EdgeEngineDashboard
+            selectedSymbol={selectedContractSymbol || 'NIFTY'}
+            spotIndices={spotIndices}
+            liveQuotes={quotes}
+            onSelectContract={(sym) => {
+              setSelectedContractSymbol(sym);
+              const dynamicSig = getOrCreateSignalForSymbol(sym, liveSignals);
+              if (!liveSignals.some((s) => s.symbol.toUpperCase() === dynamicSig.symbol.toUpperCase())) {
+                setLiveSignals((prev) => [dynamicSig, ...prev]);
+              }
+            }}
+            onTriggerFeedback={triggerUserFeedback}
+          />
+        )}
 
         {/* Step 3: AI Signals View */}
         <LiveSignalsView

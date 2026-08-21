@@ -489,3 +489,254 @@ export interface ActivePosition {
   exitReason?: 'MANUAL_EXIT' | 'TIME_STOP_AUTO_EXIT' | 'TRAILING_STOP_AUTO_EXIT' | 'TARGET_HIT_AUTO_EXIT' | 'STOP_LOSS_AUTO_EXIT';
 }
 
+// -------------------------------------------------------------------------------------------------
+// GOLDENGATE PROFITABILITY & EDGE ENGINE TYPES
+// -------------------------------------------------------------------------------------------------
+
+export type MtfAlignmentStatus =
+  | 'PERFECT_BULLISH' // 5m, 15m, 1h all bullish
+  | 'PERFECT_BEARISH' // 5m, 15m, 1h all bearish
+  | 'PARTIAL_BULLISH' // 2 of 3 bullish
+  | 'PARTIAL_BEARISH' // 2 of 3 bearish
+  | 'CONFLICTING_DIVERGENCE'; // Timeframes in direct conflict
+
+export interface TimeframeTrendBar {
+  timeframe: '5m' | '15m' | '1h';
+  trend: 'BULLISH' | 'BEARISH' | 'SIDEWAYS';
+  ema9: number;
+  ema21: number;
+  ema50: number;
+  supertrend: number;
+  supertrendDirection: 'BULL' | 'BEAR';
+  structure: 'HIGHER_HIGHS' | 'LOWER_LOWS' | 'CONSOLIDATION';
+  score: number; // 0-100
+}
+
+export interface MultiTimeframeTrend {
+  status: MtfAlignmentStatus;
+  alignmentScore: number; // 0-100
+  bars: {
+    m5: TimeframeTrendBar;
+    m15: TimeframeTrendBar;
+    h1: TimeframeTrendBar;
+  };
+  summary: string;
+}
+
+export interface VwapProfile {
+  vwapValue: number;
+  priceLocation: 'ABOVE_VWAP' | 'BELOW_VWAP' | 'AT_VWAP_TEST';
+  slope: 'RISING' | 'FALLING' | 'FLAT';
+  slopeBpsPerBar: number;
+  distancePct: number;
+  upperBand1: number;
+  lowerBand1: number;
+  upperBand2: number;
+  lowerBand2: number;
+  vwapBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  summary: string;
+}
+
+export interface AdxProfile {
+  adx: number;
+  plusDI: number;
+  minusDI: number;
+  trendStrength: 'VERY_STRONG' | 'STRONG' | 'MODERATE' | 'WEAK_CHOPPY';
+  directionalBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  isOptionBuyPermitted: boolean; // false if ADX < 20
+  summary: string;
+}
+
+export interface RvolProfile {
+  rvol: number; // e.g. 1.85 (185% of 20-period SMA volume)
+  currentVolume: number;
+  avgVolume20: number;
+  volumeRegime: 'INSTITUTIONAL_SURGE' | 'ABOVE_AVERAGE' | 'NORMAL' | 'LOW_PARTICIPATION_TRAP';
+  isInstitutionalParticipation: boolean;
+  summary: string;
+}
+
+export interface MarketBreadthProfile {
+  niftyAdvancers: number;
+  niftyDecliners: number;
+  advanceDeclineRatio: number;
+  bankNiftyBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  itSectorBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  relianceBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  overallBreadthBias: 'STRONG_BULLISH' | 'MODERATE_BULLISH' | 'NEUTRAL' | 'MODERATE_BEARISH' | 'STRONG_BEARISH';
+  breadthScore: number; // -100 to +100
+  summary: string;
+}
+
+export interface SupportResistanceStructure {
+  nearestSupport: number;
+  nearestResistance: number;
+  orb15mHigh: number;
+  orb15mLow: number;
+  pdh: number;
+  pdl: number;
+  pdc: number;
+  pivotPoint: number;
+  structureState: 'BREAKOUT_EXPANSION' | 'SUCCESSFUL_RETEST' | 'RANGE_BOUND' | 'FAKEOUT_REJECTION' | 'PULLBACK_SUPPORT';
+  distanceToBreakoutPct: number;
+  structuralQualityScore: number; // 0-100
+  summary: string;
+}
+
+export interface AtrVolatilityProfile {
+  atr14: number;
+  atrPct: number;
+  volatilityRegime: 'EXPANDING' | 'NORMAL' | 'SQUEEZE_COMPRESSION';
+  isSqueezeAlert: boolean; // BB inside Keltner
+  suggestedStopDistance: number; // 1.5x ATR
+  suggestedTargetDistance: number; // 2.5x ATR
+  summary: string;
+}
+
+export interface MomentumAccelerationProfile {
+  macdLine: number;
+  signalLine: number;
+  macdHist: number;
+  macdAcceleration: number; // 2nd derivative / delta of hist
+  rsi14: number;
+  rsiSlope: number;
+  roc10: number;
+  momentumRegime: 'ACCELERATING_BULLISH' | 'EXHAUSTING_BULLISH' | 'ACCELERATING_BEARISH' | 'EXHAUSTING_BEARISH' | 'MOMENTUM_NEUTRAL';
+  summary: string;
+}
+
+export interface OptionChainConfirmation {
+  pcr: number; // Put-Call Ratio
+  pcrRegime: 'STRONG_SUPPORT' | 'MILD_BULLISH' | 'NEUTRAL' | 'MILD_BEARISH' | 'STRONG_RESISTANCE';
+  maxPainStrike: number;
+  highCallOiStrike: number;
+  highPutOiStrike: number;
+  callOiChange: 'LONG_BUILDUP' | 'SHORT_COVERING' | 'CALL_WRITING' | 'LONG_UNWINDING';
+  putOiChange: 'PUT_WRITING' | 'PUT_BUYING' | 'SHORT_COVERING' | 'PUT_UNWINDING';
+  ivPercentile: number;
+  ivSanityPassed: boolean;
+  bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  summary: string;
+}
+
+export interface EvidencePillarItem {
+  name: string;
+  passed: boolean;
+  score: number; // weight contribution
+  maxScore: number;
+  bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  note: string;
+}
+
+export interface EvidenceStackSummary {
+  pillars: {
+    multiTimeframe: EvidencePillarItem;
+    vwapProfile: EvidencePillarItem;
+    adxStrength: EvidencePillarItem;
+    rvolVolume: EvidencePillarItem;
+    srStructure: EvidencePillarItem;
+    marketBreadth: EvidencePillarItem;
+    optionChain: EvidencePillarItem;
+    timeOfDay: EvidencePillarItem;
+  };
+  totalConfluenceScore: number; // 0-100
+  passedPillarsCount: number; // e.g. 7/8
+  totalPillarsCount: number; // 8
+  conflictDetected: boolean;
+  conflictReasons: string[];
+  finalDecision: 'EXECUTE_BUY' | 'EXECUTE_SELL' | 'NO_TRADE_EVIDENCE_CONFLICT' | 'NO_TRADE_TIME_FILTER' | 'NO_TRADE_CHOPPY_REGIME';
+  decisionRationale: string;
+}
+
+// -------------------------------------------------------------------------------------------------
+// HISTORICAL SETUP MATCHER TYPES
+// -------------------------------------------------------------------------------------------------
+
+export interface HistoricalSetupVector {
+  mtfScore: number; // -100 to +100
+  vwapSlope: number;
+  adx: number;
+  rvol: number;
+  breadthScore: number;
+  pcr: number;
+  timeOfDayBucket: TimeOfDayBucket;
+  dte: number;
+}
+
+export interface HistoricalSetupRecord {
+  id: string;
+  timestamp: string;
+  underlying: string;
+  symbol: string;
+  vector: HistoricalSetupVector;
+  direction: 'BUY' | 'SELL';
+  outcome: 'WIN' | 'LOSS';
+  returnR: number; // Return in units of R (e.g. +2.3R, -1.0R)
+  mfeR: number; // Peak excursion in R
+  maeR: number; // Max adverse excursion in R
+  realizedPnlPct: number;
+  exitReason: string;
+  holdingTimeMins: number;
+}
+
+export interface MatchedHistoricalSetup {
+  record: HistoricalSetupRecord;
+  similarityScorePct: number; // 0-100% Euclidean closeness
+  featureDistances: Record<string, number>;
+}
+
+export interface HistoricalMatcherResult {
+  sampleSize: number; // N
+  isStatisticallySignificant: boolean; // N >= 10
+  historicalWinRatePct?: number; // STRICT: ONLY DISPLAYED IF N >= 10
+  avgWinnerR?: number;
+  avgLoserR?: number;
+  expectancyInR?: number; // E = (WinRate * AvgWin) - (LossRate * AvgLoss)
+  profitFactor?: number;
+  statisticalConfidencePct: number;
+  probabilityStatusMessage: string;
+  matchedSetups: MatchedHistoricalSetup[];
+}
+
+// -------------------------------------------------------------------------------------------------
+// WALK-FORWARD & OUT-OF-SAMPLE VALIDATION TYPES
+// -------------------------------------------------------------------------------------------------
+
+export interface BacktestPeriodMetrics {
+  label: string;
+  dateRange: string;
+  totalTrades: number;
+  winningTrades: number;
+  losingTrades: number;
+  winRatePct: number;
+  profitFactor: number;
+  expectancyInR: number;
+  grossProfitINR: number;
+  grossLossINR: number;
+  netProfitINR: number;
+  netReturnPct: number;
+  maxDrawdownPct: number;
+  sharpeRatio: number;
+  recoveryFactor: number; // Net Profit / Max Drawdown INR
+  avgWinnerR: number;
+  avgLoserR: number;
+}
+
+export interface WalkForwardValidationReport {
+  id: string;
+  strategyName: string;
+  symbol: string;
+  timeframe: '1m' | '5m';
+  generatedAt: string;
+  inSample: BacktestPeriodMetrics; // 60% Training / In-Sample
+  outOfSample: BacktestPeriodMetrics; // 20% Validation / Out-of-Sample
+  walkForward: BacktestPeriodMetrics; // 20% Forward Simulation
+  parameterStabilityScore: number; // 0-100
+  outOfSampleDegradationPct: number; // e.g. 5.1% drop
+  isOverfitWarning: boolean;
+  totalTransactionCostINR: number;
+  totalSlippageCostINR: number;
+  trades: BacktestTrade[];
+}
+
+

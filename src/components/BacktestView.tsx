@@ -1,20 +1,23 @@
 import React, { useState } from 'react';
-import { BacktestReport, BacktestTrade } from '../types';
+import { BacktestReport, BacktestTrade, WalkForwardValidationReport } from '../types';
 import { TRADABLE_ASSETS, runQuantBacktest } from '../utils/quantEngine';
-import { Play, TrendingUp, ShieldAlert, Award, FileSpreadsheet, CheckCircle2, XCircle } from 'lucide-react';
+import { runWalkForwardValidation } from '../utils/walkForwardEngine';
+import { Play, TrendingUp, ShieldAlert, Award, FileSpreadsheet, CheckCircle2, XCircle, Activity, AlertTriangle } from 'lucide-react';
 
 export const BacktestView: React.FC = () => {
   const [selectedSymbol, setSelectedSymbol] = useState<string>(TRADABLE_ASSETS[0].symbol);
   const [timeframe, setTimeframe] = useState<'1m' | '5m'>('5m');
-  const [strategyName, setStrategyName] = useState<string>('EMA 9/21 Crossover + RSI Momentum');
+  const [strategyName, setStrategyName] = useState<string>('GoldenGate Multi-Pillar Edge Model');
   const [report, setReport] = useState<BacktestReport | null>(null);
+  const [wfReport, setWfReport] = useState<WalkForwardValidationReport | null>(null);
 
   const [isRunning, setIsRunning] = useState(false);
-
+  const [isWfRunning, setIsWfRunning] = useState(false);
   const [isAiRunning, setIsAiRunning] = useState(false);
 
   const handleRunBacktest = () => {
     setIsRunning(true);
+    setWfReport(null);
     setTimeout(() => {
       const result = runQuantBacktest(strategyName, selectedSymbol, timeframe);
       setReport(result);
@@ -22,8 +25,19 @@ export const BacktestView: React.FC = () => {
     }, 600);
   };
 
+  const handleRunWalkForward = () => {
+    setIsWfRunning(true);
+    setReport(null);
+    setTimeout(() => {
+      const result = runWalkForwardValidation(strategyName, selectedSymbol, timeframe);
+      setWfReport(result);
+      setIsWfRunning(false);
+    }, 700);
+  };
+
   const handleAiBacktest = async () => {
     setIsAiRunning(true);
+    setWfReport(null);
     try {
       const res = await fetch('/api/ai/read-signals-and-strategies', {
         method: 'POST',
@@ -39,7 +53,6 @@ export const BacktestView: React.FC = () => {
       if (json.success && json.data && json.data.backtestReport) {
         setReport(json.data.backtestReport);
       } else {
-        // Fallback to local quant calculation engine
         setReport(runQuantBacktest(strategyName, selectedSymbol, timeframe));
       }
     } catch {
@@ -119,17 +132,27 @@ export const BacktestView: React.FC = () => {
 
         <div className="flex flex-col md:flex-row gap-2">
           <button
+            onClick={handleRunWalkForward}
+            disabled={isWfRunning || isRunning || isAiRunning}
+            className="flex-1 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white py-2 px-3 rounded font-bold flex items-center justify-center space-x-1.5 transition-all shadow-md text-xs disabled:opacity-50"
+            title="Run Strict Walk-Forward Validation (In-Sample / Out-of-Sample / Forward Test) with Indian F&O slippage & costs"
+          >
+            <Activity className={`w-3.5 h-3.5 ${isWfRunning ? 'animate-spin' : ''}`} />
+            <span>{isWfRunning ? 'Validating...' : 'WALK-FORWARD OOS'}</span>
+          </button>
+
+          <button
             onClick={handleAiBacktest}
-            disabled={isAiRunning || isRunning}
+            disabled={isAiRunning || isRunning || isWfRunning}
             className="flex-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white py-2 px-3 rounded font-bold flex items-center justify-center space-x-1.5 transition-all shadow-md text-xs disabled:opacity-50"
           >
             <TrendingUp className={`w-3.5 h-3.5 ${isAiRunning ? 'animate-spin' : ''}`} />
-            <span>{isAiRunning ? 'AI READING SIGNALS...' : 'AI AUTO-BACKTEST'}</span>
+            <span>{isAiRunning ? 'AI READING...' : 'AI AUTO-BACKTEST'}</span>
           </button>
 
           <button
             onClick={handleRunBacktest}
-            disabled={isRunning || isAiRunning}
+            disabled={isRunning || isAiRunning || isWfRunning}
             className="flex-1 bg-[#10B981] hover:bg-[#059669] text-white py-2 px-3 rounded font-bold flex items-center justify-center space-x-1.5 transition-transform active:scale-95 disabled:opacity-50 text-xs"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
@@ -139,12 +162,87 @@ export const BacktestView: React.FC = () => {
       </div>
 
       {/* Results Overview Metrics */}
-      {!report && !isRunning && (
+      {!report && !wfReport && !isRunning && !isWfRunning && (
         <div className="bg-[#0A0B0E] border border-[#1F2937] p-10 text-center rounded space-y-2">
-          <div className="text-gray-300 font-bold text-xs uppercase tracking-wider">Awaiting Backtest Execution</div>
+          <div className="text-gray-300 font-bold text-xs uppercase tracking-wider">Awaiting Backtest or Walk-Forward Validation</div>
           <p className="text-gray-500 text-xs max-w-sm mx-auto">
-            Select your strategy model, target instrument, and timeframe above, then click 'Run Solid Backtest'.
+            Select your strategy model, target instrument, and timeframe above, then click 'WALK-FORWARD OOS' for rigorous out-of-sample testing or 'Standard Backtest'.
           </p>
+        </div>
+      )}
+
+      {/* Walk-Forward Validation Report */}
+      {wfReport && (
+        <div className="space-y-4 border border-teal-500/40 bg-[#0B1520] p-4 rounded">
+          <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+            <div className="flex items-center space-x-2">
+              <Activity className="w-4 h-4 text-teal-400" />
+              <span className="font-extrabold text-white text-xs uppercase">
+                Walk-Forward Optimization & Out-of-Sample (OOS) Verification
+              </span>
+            </div>
+            <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+              wfReport.overallStatus === 'ROBUST_EDGE' ? 'bg-emerald-900 text-emerald-200 border border-emerald-500/50' :
+              wfReport.overallStatus === 'BORDERLINE' ? 'bg-amber-900 text-amber-200 border border-amber-500/50' :
+              'bg-rose-900 text-rose-200 border border-rose-500/50'
+            }`}>
+              {wfReport.overallStatus.replace('_', ' ')} • WFE {wfReport.walkForwardEfficiency}%
+            </span>
+          </div>
+
+          {/* 3 Partition Comparative Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {/* In-Sample */}
+            <div className="bg-[#0D1826] p-3 rounded border border-gray-700">
+              <div className="text-[10px] text-gray-400 uppercase font-bold">In-Sample Training (60%)</div>
+              <div className="text-sm font-black text-white mt-1">₹{wfReport.inSample.netProfitINR.toLocaleString('en-IN')} Net</div>
+              <div className="text-[11px] text-gray-300 mt-1 flex justify-between">
+                <span>Win Rate: <strong>{wfReport.inSample.winRatePct}%</strong></span>
+                <span>PF: <strong>{wfReport.inSample.profitFactor}</strong></span>
+              </div>
+              <div className="text-[10px] text-gray-400 mt-1 flex justify-between">
+                <span>Trades: {wfReport.inSample.totalTrades}</span>
+                <span>Max DD: {wfReport.inSample.maxDrawdownPct}%</span>
+              </div>
+            </div>
+
+            {/* Out-of-Sample */}
+            <div className="bg-[#0E202B] p-3 rounded border border-teal-500/40">
+              <div className="text-[10px] text-teal-300 uppercase font-bold">Out-of-Sample Testing (20%)</div>
+              <div className={`text-sm font-black mt-1 ${wfReport.outOfSample.netProfitINR >= 0 ? 'text-teal-300' : 'text-rose-400'}`}>
+                ₹{wfReport.outOfSample.netProfitINR.toLocaleString('en-IN')} Net
+              </div>
+              <div className="text-[11px] text-gray-300 mt-1 flex justify-between">
+                <span>Win Rate: <strong>{wfReport.outOfSample.winRatePct}%</strong></span>
+                <span>PF: <strong>{wfReport.outOfSample.profitFactor}</strong></span>
+              </div>
+              <div className="text-[10px] text-gray-400 mt-1 flex justify-between">
+                <span>Trades: {wfReport.outOfSample.totalTrades}</span>
+                <span>Max DD: {wfReport.outOfSample.maxDrawdownPct}%</span>
+              </div>
+            </div>
+
+            {/* Walk-Forward */}
+            <div className="bg-[#0A241F] p-3 rounded border border-emerald-500/40">
+              <div className="text-[10px] text-emerald-300 uppercase font-bold">Live Walk-Forward (20%)</div>
+              <div className={`text-sm font-black mt-1 ${wfReport.walkForward.netProfitINR >= 0 ? 'text-emerald-300' : 'text-rose-400'}`}>
+                ₹{wfReport.walkForward.netProfitINR.toLocaleString('en-IN')} Net
+              </div>
+              <div className="text-[11px] text-gray-300 mt-1 flex justify-between">
+                <span>Win Rate: <strong>{wfReport.walkForward.winRatePct}%</strong></span>
+                <span>PF: <strong>{wfReport.walkForward.profitFactor}</strong></span>
+              </div>
+              <div className="text-[10px] text-gray-400 mt-1 flex justify-between">
+                <span>Trades: {wfReport.walkForward.totalTrades}</span>
+                <span>Max DD: {wfReport.walkForward.maxDrawdownPct}%</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="text-[11px] text-gray-300 bg-black/40 p-2.5 rounded border border-gray-800 flex items-start space-x-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+            <p>{wfReport.notes}</p>
+          </div>
         </div>
       )}
 

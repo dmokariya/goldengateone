@@ -25,6 +25,72 @@ export const UNDERLYING_CONFIGS: Record<string, StrikeStepConfig> = {
   BANKEX: { underlying: 'BANKEX', stepSize: 100, exchange: 'BFO', lotSize: 15 }
 };
 
+export interface ExpiryDetails {
+  date: Date;
+  expiryDateStr: string; // "2025-02-27"
+  displayStr: string;    // "27-FEB-2025"
+  symbolMonthStr: string;// "25FEB"
+  isToday: boolean;
+  dte: number;
+}
+
+export function getNearestWeeklyExpiry(underlying: string = 'NIFTY', referenceDate?: Date): ExpiryDetails {
+  const now = referenceDate || new Date();
+  // Get time in IST
+  const istDate = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  
+  const norm = underlying.toUpperCase().trim();
+  // SENSEX/BANKEX expire on Friday (5), NIFTY/BANKNIFTY/FINNIFTY on Thursday (4)
+  const targetDay = (norm === 'SENSEX' || norm === 'BANKEX') ? 5 : 4;
+  
+  const currentDay = istDate.getDay();
+  let daysToAdd = (targetDay - currentDay + 7) % 7;
+
+  // If today is expiry day but after 15:30 IST, roll to next week's expiry
+  const currentHours = istDate.getHours();
+  const currentMinutes = istDate.getMinutes();
+  const timeNum = currentHours * 100 + currentMinutes;
+  if (daysToAdd === 0 && timeNum >= 1530) {
+    daysToAdd = 7;
+  }
+
+  const expiryDate = new Date(istDate.getTime() + daysToAdd * 86400000);
+  expiryDate.setHours(15, 30, 0, 0);
+
+  const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+  const dd = String(expiryDate.getDate()).padStart(2, '0');
+  const mmm = months[expiryDate.getMonth()];
+  const yyyy = expiryDate.getFullYear();
+  const yy = String(yyyy).slice(-2);
+
+  const expiryDateStr = `${yyyy}-${String(expiryDate.getMonth() + 1).padStart(2, '0')}-${dd}`;
+  const displayStr = `${dd}-${mmm}-${yyyy}`;
+  const symbolMonthStr = `${yy}${mmm}`;
+
+  const diffMs = expiryDate.getTime() - istDate.getTime();
+  const dte = Math.max(0, +(diffMs / 86400000).toFixed(2));
+
+  return {
+    date: expiryDate,
+    expiryDateStr,
+    displayStr,
+    symbolMonthStr,
+    isToday: daysToAdd === 0,
+    dte
+  };
+}
+
+export function buildOptionTradingSymbol(
+  underlying: string,
+  strike: number,
+  optionType: 'CE' | 'PE',
+  expiryInfo?: ExpiryDetails
+): string {
+  const norm = underlying.toUpperCase().trim();
+  const info = expiryInfo || getNearestWeeklyExpiry(norm);
+  return `${norm}${info.symbolMonthStr}${strike}${optionType}`;
+}
+
 export function calculateDynamicAtmStrike(
   underlying: string,
   spotPrice: number
