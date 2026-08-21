@@ -562,6 +562,19 @@ export const LiveSignalsView: React.FC<LiveSignalsViewProps> = ({
                           : '⚡ EQUITY'}
                       </span>
 
+                      {/* Confluence Score Badge */}
+                      {signal.goldenGateScore !== undefined && (
+                        <span className={`text-[9.5px] font-black px-1.5 py-0.5 rounded border ${
+                          signal.goldenGateScore >= 75
+                            ? 'bg-amber-950/90 text-yellow-300 border-amber-500/50'
+                            : signal.goldenGateScore >= 55
+                            ? 'bg-emerald-950/90 text-emerald-300 border-emerald-500/40'
+                            : 'bg-rose-950/90 text-rose-300 border-rose-500/40'
+                        }`}>
+                          Score {signal.goldenGateScore}/100
+                        </span>
+                      )}
+
                       {/* Liquidity Indicator */}
                       <span className="text-[9.5px] text-blue-300 bg-blue-950/80 px-1.5 py-0.5 rounded border border-blue-500/40">
                         ATM ± 2 High Liq
@@ -581,7 +594,7 @@ export const LiveSignalsView: React.FC<LiveSignalsViewProps> = ({
                       <span>{signal.winProbabilityPct}% WIN RATE</span>
                     </div>
                     <span className="text-[10px] text-gray-400 block font-normal">
-                      Ensemble Calibrated
+                      {signal.netExpectedValueINR !== undefined ? `Net EV: ₹${signal.netExpectedValueINR > 0 ? '+' : ''}${signal.netExpectedValueINR}/lot` : 'Ensemble Calibrated'}
                     </span>
                   </div>
                 </div>
@@ -885,6 +898,39 @@ export const LiveSignalsView: React.FC<LiveSignalsViewProps> = ({
                         <span className="text-[9px] text-amber-200 block mt-0.5">Vol Benefit</span>
                       </div>
                     </div>
+
+                    {/* Strategy Attribution Scorecard */}
+                    {signal.strategyAttribution && (
+                      <div className="bg-[#0A0B0E] p-3 rounded border border-indigo-500/40 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-indigo-300 uppercase text-[10.5px] flex items-center space-x-1.5">
+                            <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+                            <span>Quantitative Strategy Attribution ({signal.strategyAttribution.totalScore}/100)</span>
+                          </span>
+                          <span className="text-[10px] text-gray-400">
+                            Round-trip Fees: ₹{signal.transactionCostINR || 45} | Net EV: ₹{signal.netExpectedValueINR || 0}/lot
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
+                          <div className="bg-[#111827] p-1.5 rounded border border-gray-800">
+                            <span className="text-gray-400 block">Regime / Trend</span>
+                            <span className="text-white font-bold">{signal.strategyAttribution.regimeTrend} / 20 pts</span>
+                          </div>
+                          <div className="bg-[#111827] p-1.5 rounded border border-gray-800">
+                            <span className="text-gray-400 block">Momentum / RSI</span>
+                            <span className="text-white font-bold">{signal.strategyAttribution.momentum} / 15 pts</span>
+                          </div>
+                          <div className="bg-[#111827] p-1.5 rounded border border-gray-800">
+                            <span className="text-gray-400 block">Option Delta / Greek</span>
+                            <span className="text-white font-bold">{signal.strategyAttribution.optionQuality} / 15 pts</span>
+                          </div>
+                          <div className="bg-[#111827] p-1.5 rounded border border-gray-800">
+                            <span className="text-gray-400 block">Liquidity & Depth</span>
+                            <span className="text-white font-bold">{signal.strategyAttribution.liquidity} / 15 pts</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Indicator Confluences */}
                     <div className="flex flex-wrap gap-1">

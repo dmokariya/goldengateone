@@ -42,6 +42,12 @@ An institutional-grade algorithmic trading terminal and quant engine tailored fo
 
 ---
 
+## 📜 Version History & Push Log
+
+For a detailed chronological record of every update, quantitative upgrade, and GitHub release, refer to [CHANGELOG.md](./CHANGELOG.md).
+
+---
+
 ## Project Structure
 
 ```

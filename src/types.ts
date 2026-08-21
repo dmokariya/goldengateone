@@ -166,6 +166,44 @@ export interface CandleData {
   signal?: 'BUY' | 'SELL' | null;
 }
 
+export type MarketSessionState = 'PREOPEN' | 'OPEN' | 'CLOSING' | 'CLOSED';
+
+export interface StrategyAttribution {
+  regimeTrend: number; // max 20 pts
+  momentum: number; // max 15 pts
+  volume: number; // max 15 pts
+  optionQuality: number; // max 15 pts
+  liquidity: number; // max 15 pts
+  structure: number; // max 10 pts
+  riskReward: number; // max 10 pts
+  totalScore: number; // max 100 pts (GoldenGate Confluence Score)
+}
+
+export type RejectionCode =
+  | 'STALE_DATA'
+  | 'EXCESSIVE_SPREAD'
+  | 'INSUFFICIENT_MARKET_DEPTH'
+  | 'PRICE_SLIPPED'
+  | 'DAILY_LOSS_LIMIT_BREACHED'
+  | 'CONSECUTIVE_LOSSES_COOLDOWN'
+  | 'MAX_PORTFOLIO_CORRELATION'
+  | 'UNRESOLVED_INSTRUMENT'
+  | 'MARKET_SESSION_CLOSED'
+  | 'SERVER_KILL_SWITCH_ACTIVE'
+  | 'CHOPPY_REGIME_OPTION_BUY_BLOCKED';
+
+export interface PreTradeValidationResult {
+  approved: boolean;
+  rejectionCode?: RejectionCode;
+  reason?: string;
+  validatedPrice?: number;
+  riskAdjustedQuantity?: number;
+  riskBudgetINR?: number;
+  attribution?: StrategyAttribution;
+  goldenGateScore?: number;
+  timestampMs: number;
+}
+
 export interface OptionGreeks {
   delta: number; // e.g. 0.62 (or -0.55)
   deltaStatus: 'EXCELLENT' | 'GOOD' | 'WEAK';
@@ -250,6 +288,10 @@ export interface LiveTradeSignal {
   isCounterTrend?: boolean; // True if opposing current market regime
   counterTrendWarning?: string; // Warning banner text
   optionStyle?: 'CALL' | 'PUT' | 'EQUITY';
+  goldenGateScore?: number; // 0 - 100 Confluence Score
+  strategyAttribution?: StrategyAttribution; // Transparent attribution breakdown
+  netExpectedValueINR?: number; // Realized net EV after all Indian taxes & brokerage
+  transactionCostINR?: number; // Estimated STT, GST, Exchange fees, SEBI, stamp duty & brokerage
   likelihoodCalculation: LikelihoodCalculation;
   zerodhaPayload: {
     tradingsymbol: string;

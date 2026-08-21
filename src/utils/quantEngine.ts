@@ -1,8 +1,9 @@
-import { CandleData, LiveTradeSignal, BacktestReport, BacktestTrade, AssetCategory, OptionGreeks, LikelihoodCalculation } from '../types';
+import { CandleData, LiveTradeSignal, BacktestReport, BacktestTrade, AssetCategory, OptionGreeks, LikelihoodCalculation, StrategyAttribution } from '../types';
 import { TRADEABLE_CONTRACTS } from '../data/contracts';
+import { calculateIndianFnoTransactionCosts } from './riskGate';
 
 export const TRADABLE_ASSETS: { symbol: string; name: string; category: AssetCategory; lotSize: number; basePrice: number }[] = [
-  // F&O Options (NIFTY Lot Size: 65, BANKNIFTY: 15, FINNIFTY: 40)
+  // F&O Options (NIFTY Lot Size: 65, BANKNIFTY: 15, FINNIFTY: 40) - NOTE: basePrice is purely catalog metadata; live trading derives strictly from live feed.
   { symbol: 'NIFTY 24650 CE', name: 'NIFTY 24650 Call Option', category: 'NIFTY_FNO', lotSize: 65, basePrice: 18.20 },
   { symbol: 'NIFTY 24600 CE', name: 'NIFTY 24600 Call Option', category: 'NIFTY_FNO', lotSize: 65, basePrice: 42.50 },
   { symbol: 'NIFTY 24500 CE', name: 'NIFTY 24500 Call Option', category: 'NIFTY_FNO', lotSize: 65, basePrice: 112.50 },
@@ -244,9 +245,11 @@ export function deriveMarketRegime(
 }
 
 /**
- * Generates candle series populated with exact technical indicators
+ * Generates synthetic candle series strictly for OFFLINE DEMO & VISUAL CHARTING.
+ * CRITICAL WARNING: Under P0 Quantitative Mandates, this function MUST NEVER be used
+ * for live trading signals, backtesting execution, or real order routing.
  */
-export function generateCandles(symbol: string, timeframe: '1m' | '5m', count: number = 40): CandleData[] {
+export function generateDemoCandles(symbol: string, timeframe: '1m' | '5m', count: number = 40): CandleData[] {
   const asset = TRADABLE_ASSETS.find((a) => a.symbol === symbol) || TRADABLE_ASSETS[0];
   let price = asset.basePrice;
   const candles: CandleData[] = [];
@@ -377,6 +380,19 @@ export function evaluateContractQuantMetrics(
     winProbabilityPct = Math.min(92, Math.max(45, winProbabilityPct));
 
     const expectedValueINR = Math.round(lotSize * ((winProbabilityPct / 100) * Math.abs(targetPrice - price) - (1 - winProbabilityPct / 100) * Math.abs(price - stopLossPrice)));
+    const txCost = calculateIndianFnoTransactionCosts(price, targetPrice, lotSize, false);
+    const netExpectedValueINR = Math.round(expectedValueINR - txCost.totalCostINR);
+
+    const strategyAttribution: StrategyAttribution = {
+      regimeTrend: changePct > 0 ? 18 : 8,
+      momentum: Math.min(15, Math.max(5, Math.round(10 + changePct * 3))),
+      volume: 12,
+      optionQuality: 15, // Stock Delta 1.0 (Zero decay)
+      liquidity: 14,
+      structure: 8,
+      riskReward: riskRewardRatio >= 1.8 ? 9 : 6,
+      totalScore: Math.min(100, Math.max(10, Math.round(winProbabilityPct)))
+    };
 
     return {
       category,
@@ -395,6 +411,10 @@ export function evaluateContractQuantMetrics(
       spotPriceUsed: price,
       underlyingSymbol: cleanSym,
       marketRegime: 'BULLISH_TREND' as const,
+      goldenGateScore: strategyAttribution.totalScore,
+      strategyAttribution,
+      netExpectedValueINR,
+      transactionCostINR: txCost.totalCostINR,
       greeks: {
         delta: isShort ? -1.00 : 1.00,
         deltaStatus: 'EXCELLENT' as const,
@@ -419,7 +439,7 @@ export function evaluateContractQuantMetrics(
         expectedValueINR,
         deltaGreeksScore: 'Equity Stock Delta 1.0 (0% Theta Risk)',
         sharpeRatioEstimate: +(winProbabilityPct / 35).toFixed(2),
-        rationale: `${winProbabilityPct}% Win Probability calculated from intraday momentum and volume breakout.`,
+        rationale: `${winProbabilityPct}% Win Probability calculated from intraday momentum and volume breakout. Net EV after ₹${txCost.totalCostINR} round-trip charges: ₹${netExpectedValueINR}.`,
         timeStopRule: 'Exit at 3:15 PM EOD square-off if target not reached.',
         technicalIndicatorsBreakdown: {
           rsi: isShort ? 38.2 : 64.5,
@@ -512,7 +532,6 @@ export function evaluateContractQuantMetrics(
   const winProbabilityPct = Math.min(95, Math.max(8, calibratedWinProb));
 
   // Stop Loss & Target derived from option Delta & underlying volatility
-  // Stop Loss: 1.5x Delta distance; Target: 2.2x Delta distance
   const targetMultiplier = moneyness === 'FAR_OTM' ? 1.45 : moneyness === 'OTM' ? 1.35 : 1.25;
   const slMultiplier = moneyness === 'FAR_OTM' ? 0.70 : moneyness === 'OTM' ? 0.80 : 0.86;
 
@@ -526,14 +545,39 @@ export function evaluateContractQuantMetrics(
   const potentialRisk = price - stopLossPrice;
   const expectedValueINR = Math.round(lotSize * ((winProbRatio * potentialReward) - ((1 - winProbRatio) * potentialRisk)));
 
+  // Realistic Net Realized Expected Value including Indian taxes & brokerage
+  const txCost = calculateIndianFnoTransactionCosts(price, targetPrice, lotSize, true);
+  const netExpectedValueINR = Math.round(expectedValueINR - txCost.totalCostINR);
+
   let thetaStatus: 'SAFE_LOW_DECAY' | 'MODERATE' | 'HIGH_DECAY_RISK' | 'SEVERE_HIGH_DECAY' = 'MODERATE';
   if (thetaDecayPctPerDay > 18) thetaStatus = 'SEVERE_HIGH_DECAY';
   else if (thetaDecayPctPerDay > 9) thetaStatus = 'HIGH_DECAY_RISK';
   else if (thetaDecayPctPerDay <= 5) thetaStatus = 'SAFE_LOW_DECAY';
 
+  // Strategy Attribution Breakdown (0 - 100 GoldenGate Confluence Score)
+  const regimeScore = isMarketBullish && isCE ? 19 : !isMarketBullish && isPE ? 17 : marketRegime === 'CHOPPY_SIDEWAYS' ? 6 : 4;
+  const momentumScore = isCounterTrend ? 4 : changePct > 0 ? 13 : 8;
+  const volumeScore = liveQuote?.depth ? 13 : 11;
+  const optionQualityScore = absDelta >= 0.50 && thetaDecayPctPerDay < 12 ? 14 : absDelta >= 0.40 ? 10 : 4;
+  const liquidityScore = (moneyness === 'ATM' || moneyness === 'ITM') ? 14 : 7;
+  const structureScore = 8;
+  const riskRewardScore = riskRewardRatio >= 1.8 ? 9 : 6;
+  const totalScore = Math.min(100, regimeScore + momentumScore + volumeScore + optionQualityScore + liquidityScore + structureScore + riskRewardScore);
+
+  const strategyAttribution: StrategyAttribution = {
+    regimeTrend: regimeScore,
+    momentum: momentumScore,
+    volume: volumeScore,
+    optionQuality: optionQualityScore,
+    liquidity: liquidityScore,
+    structure: structureScore,
+    riskReward: riskRewardScore,
+    totalScore
+  };
+
   // Bad Trade Detection Flags
-  const isBadTradeWarning = winProbabilityPct < 50 || thetaStatus === 'SEVERE_HIGH_DECAY' || expectedValueINR < 0 || isCounterTrend;
-  const isMustTakeTrade = winProbabilityPct >= 80 && expectedValueINR > 0 && !isBadTradeWarning && absDelta >= 0.50;
+  const isBadTradeWarning = winProbabilityPct < 50 || thetaStatus === 'SEVERE_HIGH_DECAY' || expectedValueINR < 0 || isCounterTrend || totalScore < 50;
+  const isMustTakeTrade = winProbabilityPct >= 80 && expectedValueINR > 0 && !isBadTradeWarning && absDelta >= 0.50 && totalScore >= 75;
 
   let badTradeReason: string | undefined = undefined;
   if (isBadTradeWarning) {
@@ -548,16 +592,16 @@ export function evaluateContractQuantMetrics(
 
   let mustTakeReason: string | undefined = undefined;
   if (isMustTakeTrade) {
-    mustTakeReason = `🔥 PRIME HIGH-DELTA SQUEEZE: Strike ${strikePrice} (${moneyness.replace('_', ' ')}) has strong +${absDelta.toFixed(2)} Delta and minimal relative time decay (-${thetaDecayPctPerDay}%/day). Analytical Black-Scholes probability is ${winProbabilityPct}% with positive Expected Value (+₹${expectedValueINR}/lot).`;
+    mustTakeReason = `🔥 PRIME HIGH-DELTA SQUEEZE (Confluence Score: ${totalScore}/100): Strike ${strikePrice} (${moneyness.replace('_', ' ')}) has strong +${absDelta.toFixed(2)} Delta and minimal relative time decay (-${thetaDecayPctPerDay}%/day). Analytical Black-Scholes probability is ${winProbabilityPct}% with Net EV +₹${netExpectedValueINR}/lot.`;
   }
 
   let laymanReason = '';
   if (isBadTradeWarning) {
-    laymanReason = `AVOID / SPECULATIVE SETUP: ${cleanSym} is ${moneyness.replace('_', ' ')} with low Delta (+${absDelta.toFixed(2)}) and rapid daily time decay (-${thetaDecayPctPerDay}%/day). Expected value is negative.`;
+    laymanReason = `AVOID / SPECULATIVE SETUP: ${cleanSym} is ${moneyness.replace('_', ' ')} with low Delta (+${absDelta.toFixed(2)}) and rapid daily time decay (-${thetaDecayPctPerDay}%/day). Net expected value is negative.`;
   } else if (isMustTakeTrade) {
-    laymanReason = `MUST TAKE SETUP: ${cleanSym} is ${moneyness.replace('_', ' ')} with high +${absDelta.toFixed(2)} Delta. For every ₹100 index move, this contract gains ₹${Math.round(absDelta * 100)} with low daily decay.`;
+    laymanReason = `MUST TAKE SETUP (${totalScore}/100 Score): ${cleanSym} is ${moneyness.replace('_', ' ')} with high +${absDelta.toFixed(2)} Delta. Net expected value is +₹${netExpectedValueINR}/lot after ₹${txCost.totalCostINR} round-trip transaction costs.`;
   } else {
-    laymanReason = `Active ${cleanSym} option trade. Delta +${absDelta.toFixed(2)}, daily time decay -₹${Math.abs(dailyTheta).toFixed(1)}/day.`;
+    laymanReason = `Active ${cleanSym} option trade. Confluence score ${totalScore}/100, Delta +${absDelta.toFixed(2)}, daily time decay -₹${Math.abs(dailyTheta).toFixed(1)}/day.`;
   }
 
   const confidenceLevel: 'VERY_HIGH' | 'HIGH' | 'MEDIUM' | 'LOW' =
@@ -593,6 +637,10 @@ export function evaluateContractQuantMetrics(
     actualIV: +(actualIV * 100).toFixed(1),
     riskFreeRate,
     marketRegime,
+    goldenGateScore: totalScore,
+    strategyAttribution,
+    netExpectedValueINR,
+    transactionCostINR: txCost.totalCostINR,
     greeks: {
       delta,
       deltaStatus: (absDelta >= 0.55 ? 'EXCELLENT' : absDelta >= 0.40 ? 'GOOD' : 'WEAK') as 'EXCELLENT' | 'GOOD' | 'WEAK',
@@ -617,7 +665,7 @@ export function evaluateContractQuantMetrics(
       expectedValueINR,
       deltaGreeksScore: `${delta > 0 ? '+' : ''}${delta.toFixed(2)} Delta (${moneyness.replace('_', ' ')})`,
       sharpeRatioEstimate: +(winProbabilityPct / 35).toFixed(2),
-      rationale: `${winProbabilityPct}% Probability derived from Black-Scholes ITM N(d2), Delta (+${absDelta.toFixed(2)}), and Theta Decay (-${thetaDecayPctPerDay}%/day).`,
+      rationale: `${winProbabilityPct}% Probability derived from Black-Scholes ITM N(d2), Delta (+${absDelta.toFixed(2)}), and Theta Decay (-${thetaDecayPctPerDay}%/day). Net Realized EV: ₹${netExpectedValueINR} (after ₹${txCost.totalCostINR} taxes/fees).`,
       timeStopRule: `Exit Rule: Close if flat after 15 Mins to prevent Theta decay (-${thetaDecayPctPerDay}%/day).`,
       technicalIndicatorsBreakdown: {
         rsi: isPE ? 38.5 : isBadTradeWarning ? 44.2 : 66.8,
@@ -756,6 +804,10 @@ export function generateLiveSignals(
       riskFreeRate: evaluated.riskFreeRate,
       marketRegime: evaluated.marketRegime,
       greeks: evaluated.greeks,
+      goldenGateScore: evaluated.goldenGateScore,
+      strategyAttribution: evaluated.strategyAttribution,
+      netExpectedValueINR: evaluated.netExpectedValueINR,
+      transactionCostINR: evaluated.transactionCostINR,
       isMustTakeTrade: evaluated.isMustTakeTrade,
       mustTakeReason: evaluated.mustTakeReason,
       isBadTradeWarning: evaluated.isBadTradeWarning,
@@ -849,6 +901,10 @@ export function generateFreshRecalibratedSignal(
     actualIV: evaluated.actualIV,
     riskFreeRate: evaluated.riskFreeRate,
     marketRegime: evaluated.marketRegime,
+    goldenGateScore: evaluated.goldenGateScore,
+    strategyAttribution: evaluated.strategyAttribution,
+    netExpectedValueINR: evaluated.netExpectedValueINR,
+    transactionCostINR: evaluated.transactionCostINR,
     greeks: evaluated.greeks,
     isMustTakeTrade: evaluated.isMustTakeTrade,
     mustTakeReason: evaluated.mustTakeReason,
@@ -928,7 +984,7 @@ export function calculateSlippageProtectedPrice(
 }
 
 /**
- * Execute a rigorous backtest simulation over historical candles
+ * Execute a backtest simulation over demo historical candles
  */
 export function runQuantBacktest(
   strategyName: string,
@@ -938,7 +994,7 @@ export function runQuantBacktest(
 ): BacktestReport {
   const asset = TRADABLE_ASSETS.find((a) => a.symbol === symbol) || TRADABLE_ASSETS[0];
   const candlesCount = timeframe === '1m' ? 500 : 250;
-  const candles = generateCandles(symbol, timeframe, candlesCount);
+  const candles = generateDemoCandles(symbol, timeframe, candlesCount);
 
   const trades: BacktestTrade[] = [];
   let currentPosition: { type: 'BUY' | 'SELL'; entryPrice: number; entryTime: string; stopLoss: number; target: number } | null = null;

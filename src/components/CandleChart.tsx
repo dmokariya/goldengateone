@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CandleData } from '../types';
-import { TRADABLE_ASSETS, generateCandles } from '../utils/quantEngine';
+import { TRADABLE_ASSETS, generateDemoCandles } from '../utils/quantEngine';
 import { BarChart2, Eye, TrendingUp, RefreshCw, Zap } from 'lucide-react';
 
 interface CandleChartProps {
@@ -24,12 +24,12 @@ export const CandleChart: React.FC<CandleChartProps> = ({
 
   // Load/re-generate candles whenever symbol or timeframe changes
   useEffect(() => {
-    const loaded = generateCandles(selectedSymbol, timeframe, 36);
+    const loaded = generateDemoCandles(selectedSymbol, timeframe, 36);
     setCandles(loaded);
   }, [selectedSymbol, timeframe]);
 
   const handleRefreshData = () => {
-    setCandles(generateCandles(selectedSymbol, timeframe, 36));
+    setCandles(generateDemoCandles(selectedSymbol, timeframe, 36));
   };
 
   // Dimensions for Chart SVG

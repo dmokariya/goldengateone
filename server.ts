@@ -35,6 +35,113 @@ async function startServer() {
     res.json({ status: "ok", mode: "full-stack" });
   });
 
+  // Global Server Kill Switch State
+  let isServerKillSwitchActive = false;
+
+  app.get("/api/server/kill-switch", (req, res) => {
+    res.json({
+      success: true,
+      isActive: isServerKillSwitchActive,
+      updatedAt: new Date().toISOString()
+    });
+  });
+
+  app.post("/api/server/kill-switch", (req, res) => {
+    const { active, reason } = req.body;
+    isServerKillSwitchActive = !!active;
+    console.log(`[Server Risk Guard] Server Kill Switch set to ${isServerKillSwitchActive}. Reason: ${reason || 'Manual user toggle'}`);
+    res.json({
+      success: true,
+      isActive: isServerKillSwitchActive,
+      message: isServerKillSwitchActive
+        ? '⚠️ EMERGENCY SERVER KILL SWITCH ENGAGED. All order routing blocked.'
+        : '✓ Server Kill Switch disengaged. Order routing active.',
+      updatedAt: new Date().toISOString()
+    });
+  });
+
+  // Pre-Trade Risk Gate Endpoint for Live Signals / Orders
+  app.post("/api/zerodha/validate-pre-trade", async (req, res) => {
+    try {
+      const {
+        tradingsymbol,
+        exchange = 'NFO',
+        price = 0,
+        liveLtp = 0,
+        accountEquity = 100000,
+        dailyRealizedPnlINR = 0,
+        consecutiveLossCount = 0
+      } = req.body;
+
+      if (isServerKillSwitchActive) {
+        return res.json({
+          approved: false,
+          rejectionCode: 'SERVER_KILL_SWITCH_ACTIVE',
+          reason: 'Emergency server kill switch active. All automated & manual order routing blocked.',
+          timestampMs: Date.now()
+        });
+      }
+
+      // Check instrument resolution
+      const resolvedInst = resolveZerodhaInstrument(tradingsymbol, exchange);
+      if (!resolvedInst) {
+        return res.json({
+          approved: false,
+          rejectionCode: 'INVALID_INSTRUMENT',
+          reason: `Instrument "${tradingsymbol}" could not be verified in live Zerodha Instrument Master.`,
+          timestampMs: Date.now()
+        });
+      }
+
+      // Check daily loss limit (-2% account equity)
+      const maxDailyLossAllowed = -(accountEquity * 0.02);
+      if (dailyRealizedPnlINR <= maxDailyLossAllowed) {
+        return res.json({
+          approved: false,
+          rejectionCode: 'DAILY_LOSS_LIMIT_BREACHED',
+          reason: `Daily loss limit reached (₹${dailyRealizedPnlINR.toFixed(2)} / Limit: ₹${maxDailyLossAllowed.toFixed(2)}). Execution locked.`,
+          timestampMs: Date.now()
+        });
+      }
+
+      // Check consecutive losses (3 losses)
+      if (consecutiveLossCount >= 3) {
+        return res.json({
+          approved: false,
+          rejectionCode: 'CONSECUTIVE_LOSSES_COOLDOWN',
+          reason: '3 consecutive losses detected. Execution cooling down.',
+          timestampMs: Date.now()
+        });
+      }
+
+      // Check price slippage vs live LTP (> 2%)
+      if (price > 0 && liveLtp > 0) {
+        const slippagePct = Math.abs(price - liveLtp) / liveLtp * 100;
+        if (slippagePct > 2.0) {
+          return res.json({
+            approved: false,
+            rejectionCode: 'PRICE_SLIPPED',
+            reason: `Price has moved ${slippagePct.toFixed(2)}% from signal price (Signal: ₹${price}, Live: ₹${liveLtp}).`,
+            timestampMs: Date.now()
+          });
+        }
+      }
+
+      return res.json({
+        approved: true,
+        resolvedInstrument: resolvedInst,
+        message: '✓ Pre-trade risk gate passed. Order is valid for submission.',
+        timestampMs: Date.now()
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        approved: false,
+        rejectionCode: 'UNKNOWN_GATE_ERROR',
+        reason: err.message || 'Error validating pre-trade risk gate'
+      });
+    }
+  });
+
   // Server Info & IP Address Lookup Endpoint for Zerodha Developer Console Setup
   const postbackLogs: any[] = [];
   
@@ -267,6 +374,15 @@ async function startServer() {
         slippage_guard = true,
         slippage_buffer_pct = 0.5
       } = req.body;
+
+      // 0. Server-Side Kill Switch Guard
+      if (isServerKillSwitchActive) {
+        return res.status(403).json({
+          success: false,
+          errorType: 'SERVER_KILL_SWITCH_ACTIVE',
+          message: 'Execution blocked: Emergency Server Kill Switch is currently active.'
+        });
+      }
 
       if (!tradingsymbol) {
         return res.status(400).json({
