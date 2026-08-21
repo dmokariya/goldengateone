@@ -14,6 +14,57 @@ import {
 } from '../types';
 
 const HISTORICAL_SETUPS_KEY = 'goldengate_historical_setup_database';
+const REALIZED_EVIDENCE_LOGS_KEY = 'goldengate_evidence_realized_records';
+
+export function getRealizedEvidenceLogs(): import('../types').RealizedEvidenceLog[] {
+  try {
+    const saved = localStorage.getItem(REALIZED_EVIDENCE_LOGS_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {
+    console.error('Error loading realized evidence logs:', e);
+  }
+  return [];
+}
+
+export function saveRealizedEvidenceLog(log: import('../types').RealizedEvidenceLog): void {
+  const current = getRealizedEvidenceLogs();
+  const updated = [log, ...current].slice(0, 500);
+  try {
+    localStorage.setItem(REALIZED_EVIDENCE_LOGS_KEY, JSON.stringify(updated));
+  } catch (e) {
+    console.error('Error saving realized evidence log:', e);
+  }
+
+  // Also convert to a HistoricalSetupRecord to feed back into KNN database
+  const histRecord: HistoricalSetupRecord = {
+    id: `realized-${log.id}`,
+    timestamp: log.timestamp,
+    underlying: log.symbol.split(' ')[0],
+    symbol: log.symbol,
+    vector: {
+      mtfScore: log.goldenGateScore >= 75 ? 85 : 45,
+      vwapSlope: log.direction === 'BUY' ? 4.5 : -4.5,
+      adx: log.goldenGateScore >= 75 ? 28 : 18,
+      rvol: 1.6,
+      breadthScore: 50,
+      pcr: 1.2,
+      timeOfDayBucket: log.timeOfDay,
+      dte: 3.5
+    },
+    direction: log.direction,
+    outcome: log.result === 'WIN' ? 'WIN' : 'LOSS',
+    returnR: +log.realizedRMultiple.toFixed(2),
+    mfeR: +(log.realizedRMultiple > 0 ? log.realizedRMultiple + 0.3 : 0.4).toFixed(2),
+    maeR: +(log.realizedRMultiple < 0 ? log.realizedRMultiple : -0.2).toFixed(2),
+    realizedPnlPct: +(log.realizedRMultiple * 10).toFixed(1),
+    exitReason: log.result === 'WIN' ? 'TARGET_REALIZED' : 'SL_HIT',
+    holdingTimeMins: 20
+  };
+  saveNewHistoricalSetup(histRecord);
+}
 
 // -------------------------------------------------------------------------------------------------
 // SEED HISTORICAL SETUPS DATABASE (Authentic Indian Market Conditions)

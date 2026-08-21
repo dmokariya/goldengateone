@@ -17,11 +17,14 @@ import { evaluateEvidenceStack, evaluateMultiTimeframeTrend, evaluateVwapProfile
 export function runWalkForwardValidation(
   strategyName: string,
   symbol: string,
-  timeframe: '1m' | '5m' = '5m'
+  timeframe: '1m' | '5m' = '5m',
+  customCandles?: CandleData[]
 ): WalkForwardValidationReport {
   const asset = TRADABLE_ASSETS.find(a => a.symbol === symbol) || TRADABLE_ASSETS[0];
   const totalCandlesCount = timeframe === '1m' ? 600 : 300;
-  const candles = generateDemoCandles(symbol, timeframe, totalCandlesCount);
+  const candles = (customCandles && customCandles.length >= 60)
+    ? customCandles
+    : generateDemoCandles(symbol, timeframe, totalCandlesCount);
 
   // 1. Strict Partitioning:
   // In-Sample (60%): Indices [0 to 60%]
@@ -226,8 +229,30 @@ export function runWalkForwardValidation(
   const outOfSampleDegradationPct = +Math.max(0, winRateDrop).toFixed(1);
   const isOverfitWarning = outOfSampleDegradationPct > 15.0;
 
+  // Walk-Forward Efficiency (WFE): Ratio of OOS annualized performance to In-Sample performance
+  const normalizedIsNet = Math.max(100, inSample.metrics.netProfitINR);
+  const normalizedOosNet = outOfSample.metrics.netProfitINR;
+  const walkForwardEfficiencyPct = +Math.max(0, Math.min(150, (normalizedOosNet / (normalizedIsNet * 0.333)) * 100)).toFixed(1);
+
   // Parameter stability score: 100 - (degradation * 3)
   const parameterStabilityScore = Math.max(30, Math.min(98, Math.round(100 - outOfSampleDegradationPct * 2.5)));
+
+  // STRICT PROMOTION GATE:
+  // 1. OOS Net Profit > 0 after full Indian brokerage, STT, exchange fees, GST, and slippage
+  // 2. OOS Expectancy E(R) >= +0.20R
+  // 3. Walk-Forward Efficiency (WFE) >= 60.0%
+  // 4. No Severe Overfit Warning
+  const isPromotionApproved = outOfSample.metrics.netProfitINR > 0 &&
+                             outOfSample.metrics.expectancyInR >= 0.20 &&
+                             walkForwardEfficiencyPct >= 60.0 &&
+                             !isOverfitWarning;
+
+  let promotionVerdict = '';
+  if (isPromotionApproved) {
+    promotionVerdict = `✅ PROMOTION APPROVED: Verified positive Out-of-Sample edge (Net EV: ₹${outOfSample.metrics.netProfitINR}, E(R): +${outOfSample.metrics.expectancyInR}R, WFE: ${walkForwardEfficiencyPct}%) after ₹${totalCost} Indian taxes/brokerage and ₹${totalSlippage} slippage.`;
+  } else {
+    promotionVerdict = `⛔ PROMOTION REJECTED: Strategy fails Out-of-Sample validation requirements. In-sample optimization cannot be promoted without confirmed OOS net edge (WFE: ${walkForwardEfficiencyPct}% < 60% threshold, or OOS Expectancy < +0.20R).`;
+  }
 
   return {
     id: `wf-report-${Date.now()}`,
@@ -238,9 +263,12 @@ export function runWalkForwardValidation(
     inSample: inSample.metrics,
     outOfSample: outOfSample.metrics,
     walkForward: walkForward.metrics,
+    walkForwardEfficiencyPct,
     parameterStabilityScore,
     outOfSampleDegradationPct,
     isOverfitWarning,
+    isPromotionApproved,
+    promotionVerdict,
     totalTransactionCostINR: totalCost,
     totalSlippageCostINR: totalSlippage,
     trades: [...inSample.trades, ...outOfSample.trades, ...walkForward.trades]

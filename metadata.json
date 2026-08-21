@@ -1,6 +1,6 @@
 {
   "name": "GoldenGate Terminal",
-  "description": "Zerodha Algo Trading Terminal: Connect Zerodha API, load tradeable contracts (NIFTY/BANKNIFTY/FINNIFTY/Equities), read AI signals with win probabilities, and confirm trades for live Zerodha execution.",
+  "description": "Selective Evidence-Based Trading Terminal: Regime-to-strategy routing, volatility position sizing, percentile opportunity ranking, failed breakout radar, empirical setup matrix, and Walk-Forward out-of-sample gating with Indian transaction costs.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

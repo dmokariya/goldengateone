@@ -133,7 +133,28 @@ export interface TradingStrategy {
   totalPnL: number;
 }
 
-export type AssetCategory = 'NIFTY_FNO' | 'BANKNIFTY_FNO' | 'FINNIFTY_FNO' | 'EQUITY_INTRADAY';
+export type AssetCategory = 'NIFTY_FNO' | 'BANKNIFTY_FNO' | 'FINNIFTY_FNO' | 'SENSEX_FNO' | 'EQUITY_INTRADAY';
+
+export interface RealizedEvidenceLog {
+  id: string;
+  symbol: string;
+  direction: 'BUY' | 'SELL';
+  goldenGateScore: number;
+  evidencePillarsCount: number;
+  entryLtp: number;
+  actualFillPrice: number;
+  exitPrice: number;
+  slippageINR: number;
+  slippagePct: number;
+  transactionCostsINR: number;
+  realizedPnlINR: number;
+  realizedRMultiple: number;
+  result: 'WIN' | 'LOSS' | 'BREAKEVEN';
+  timeOfDay: TimeOfDayBucket;
+  marketRegime: string;
+  timestamp: string;
+  source: 'ZERODHA_KITE_LIVE' | 'PAPER_SHADOW';
+}
 
 export interface TradeableContract {
   symbol: string;
@@ -731,12 +752,183 @@ export interface WalkForwardValidationReport {
   inSample: BacktestPeriodMetrics; // 60% Training / In-Sample
   outOfSample: BacktestPeriodMetrics; // 20% Validation / Out-of-Sample
   walkForward: BacktestPeriodMetrics; // 20% Forward Simulation
+  walkForwardEfficiencyPct: number; // WFE = (OOS Annualized / IS Annualized) * 100
   parameterStabilityScore: number; // 0-100
   outOfSampleDegradationPct: number; // e.g. 5.1% drop
   isOverfitWarning: boolean;
+  isPromotionApproved: boolean; // STRICT: Approved ONLY if OOS Net EV > 0 and WFE >= 60%
+  promotionVerdict: string;
   totalTransactionCostINR: number;
   totalSlippageCostINR: number;
   trades: BacktestTrade[];
 }
+
+// -------------------------------------------------------------------------------------------------
+// REGIME-TO-STRATEGY ROUTING & EVIDENCE-BASED TRADING TYPES
+// -------------------------------------------------------------------------------------------------
+
+export type MarketRegimeArchetype =
+  | 'TREND_EXPANSION'
+  | 'MEAN_REVERTING_CHOP'
+  | 'VOLATILITY_SQUEEZE'
+  | 'FAILED_BREAKOUT_TRAP'
+  | 'HIGH_VOLATILITY_EXPANSION';
+
+export type RoutedStrategyType =
+  | 'EMA_VWAP_PULLBACK_TREND'
+  | 'BREAKOUT_RETEST_EXPANSION'
+  | 'VWAP_MEAN_REVERSION'
+  | 'TRAP_FADE_REVERSAL'
+  | 'VOLATILITY_SQUEEZE_FIRE'
+  | 'NO_TRADE_CAPITAL_PRESERVATION';
+
+export interface RoutedStrategyDecision {
+  regime: MarketRegimeArchetype;
+  regimeConfidencePct: number;
+  regimeRationale: string;
+  recommendedStrategy: RoutedStrategyType;
+  strategyName: string;
+  strategyDescription: string;
+  requiredConditions: {
+    name: string;
+    met: boolean;
+    currentValue: string;
+    threshold: string;
+  }[];
+  isAllConditionsMet: boolean;
+  executionReadiness: 'READY_FOR_EXECUTION' | 'STANDBY_AWAITING_TRIGGER' | 'BLOCKED_BY_REGIME' | 'NO_TRADE_ZONE';
+  riskMultiplier: number; // 0.0x to 1.2x
+}
+
+export interface VolatilityPositionSizing {
+  accountCapitalINR: number;
+  riskBudgetPct: number; // e.g. 0.5% or 1.0%
+  baseRiskBudgetINR: number; // e.g. ₹1,000
+  volatilityScaleFactor: number; // 0.5x in high vol, 1.2x in low vol
+  effectiveRiskINR: number; // baseRisk * volatilityFactor
+  entryPrice: number;
+  stopLossPrice: number;
+  stopDistanceINR: number;
+  stopDistancePct: number;
+  atr14: number;
+  instrumentLotSize: number;
+  calculatedLots: number;
+  calculatedQuantity: number;
+  totalCapitalRequiredINR: number;
+  maxDrawdownRiskINR: number;
+  kellyFractionOptimal: number; // e.g. 0.28 (Fractional Kelly)
+  netExpectancyINR: number;
+  sizingRationale: string;
+}
+
+export interface TrendPersistenceProfile {
+  kaufmanEfficiencyRatio: number; // 0.00 (Random/Noise) to 1.00 (Pure Directional Line)
+  hurstProxy: number; // >0.55 Persistent, ~0.50 Random, <0.45 Anti-persistent/Mean Reverting
+  persistenceScore: number; // 0 to 100
+  persistenceRegime: 'STRONG_INSTITUTIONAL_PERSISTENCE' | 'MODERATE_TREND' | 'RANDOM_WALK_NOISE' | 'MEAN_REVERTING_CHOP';
+  adxSlope: number; // Momentum inertia
+  summary: string;
+}
+
+export interface TrapDetectionProfile {
+  trapDetected: boolean;
+  trapType: 'BULL_TRAP_EXPANSION' | 'BEAR_TRAP_BREAKDOWN' | 'LIQUIDITY_SWEEP_REJECTION' | 'NONE';
+  sweptLevel: number;
+  sweptLevelLabel: string; // e.g. 'Session High (PDH)', '15m ORB High'
+  rejectionWickPct: number; // % of candle formed by rejection wick
+  deltaDivergence: boolean; // Price made new high but delta/volume fell
+  trapSeverity: 'HIGH_CONVICTION_TRAP' | 'MODERATE_TRAP' | 'NO_TRAP';
+  tradingDirective: 'BLOCK_BREAKOUT_ENTRIES' | 'ROUTE_TO_TRAP_FADE' | 'NORMAL_FLOW';
+  explanation: string;
+}
+
+export interface RelativeStrengthProfile {
+  symbol: string;
+  category: string;
+  rsRatioVsNifty: number; // Relative strength vs Nifty 50 benchmark (>1.0 is outperforming)
+  rsTrend: 'STRONG_OUTPERFORMER' | 'MILD_OUTPERFORMER' | 'MARKET_PERFORMER' | 'UNDERPERFORMER';
+  constituentBreadthPct: number; // % of top Nifty heavyweights above VWAP
+  heavyweightsAboveVwapCount: number; // e.g. 4 / 5
+  sectorBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  summary: string;
+}
+
+export interface DynamicExitPlan {
+  entryPrice: number;
+  initialStopLoss: number;
+  initialRiskR_INR: number; // 1R distance
+  t1TargetPrice: number; // 1.5R target for 50% scale out
+  t1TargetPct: number;
+  t1TargetR: number;
+  t1Quantity: number;
+  t1ScaleOutPct: number; // 50%
+  breakevenStopPrice: number; // Entry + Transaction Costs Buffer (₹40 round trip / lot)
+  chandelierTrailDistanceINR: number; // 2.0x ATR
+  chandelierCurrentTrailPrice: number; // Dynamic trailing stop for remaining 50%
+  runnerTargetPrice: number; // 3.0R - 5.0R trend expansion target
+  runnerTargetR: number;
+  runnerQuantity: number;
+  maxHoldingDurationMins: number; // Time stop (e.g. 25 mins for options)
+  exitStrategySummary: string;
+}
+
+export interface RankedTradeOpportunity {
+  rank: number;
+  percentile: number; // Top 5%, 10%, 25%, etc.
+  symbol: string;
+  category: string;
+  direction: 'BUY' | 'SELL';
+  isOption: boolean;
+  strikeOrProduct: string;
+  currentLtp: number;
+  entryPrice: number;
+  stopLossPrice: number;
+  targetPrice: number;
+  riskRewardRatio: number;
+  compositeEdgeScore: number; // 0 - 100
+  regime: MarketRegimeArchetype;
+  routedStrategy: string;
+  persistenceScore: number;
+  historicalExpectancyR: number;
+  historicalWinRatePct: number;
+  sampleSizeN: number;
+  grossEvINR: number;
+  estimatedTransactionCostsINR: number;
+  netEvINR: number; // Net expected value in ₹ after full Indian taxes & slippage
+  isTopPercentileApproved: boolean; // STRICT: Approved ONLY if top 15% and Composite Score >= 80 and Net EV > 0
+  gatingVerdict: 'APPROVED_TOP_DECILE' | 'FILTERED_OUT_LOWER_PERCENTILE' | 'BLOCKED_NEGATIVE_NET_EV' | 'BLOCKED_DESTRUCTIVE_SETUP';
+  rejectionReason?: string;
+}
+
+export interface DestructiveSetupCondition {
+  id: string;
+  name: string;
+  description: string;
+  historicalSampleSize: number;
+  historicalWinRatePct: number;
+  historicalExpectancyR: number;
+  profitFactor: number;
+  maxDrawdownPct: number;
+  regime: string;
+  timeOfDay: string;
+  isCurrentlyActive: boolean;
+  rejectionAction: 'STRICT_NO_TRADE_BLOCK';
+  warningMessage: string;
+}
+
+export interface SetupMatrixRow {
+  setupName: string;
+  sampleSizeN: number;
+  winRatePct: number;
+  avgWinR: number;
+  avgLossR: number;
+  expectancyR: number;
+  profitFactor: number;
+  maxDrawdownPct: number;
+  regime: string;
+  timeOfDay: string;
+  status: 'HIGH_EDGE_APPROVED' | 'MODERATE_EDGE' | 'DESTRUCTIVE_BLACKLISTED';
+}
+
 
 

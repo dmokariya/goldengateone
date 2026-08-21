@@ -711,7 +711,12 @@ export function evaluateEvidenceStack(params: {
     conflictReasons.push(`Session Cutoff: Current session (${timeBucket}) blocks new position entries.`);
   }
 
-  const conflictDetected = conflictReasons.length > 0 || passedPillarsCount < 5 || totalConfluenceScore < 70;
+  // Adaptive Time-of-Day Minimum Score Hurdle:
+  // - Opening discovery (09:15-09:45) & Midday (11:30-13:30) require higher score (>= 80)
+  // - Prime morning / afternoon trend require >= 72
+  const minScoreHurdle = (timeBucket === 'OPENING_DISCOVERY' || timeBucket === 'MIDDAY_CHOP') ? 80 : 72;
+
+  const conflictDetected = conflictReasons.length > 0 || passedPillarsCount < 5 || totalConfluenceScore < minScoreHurdle;
 
   let finalDecision: 'EXECUTE_BUY' | 'EXECUTE_SELL' | 'NO_TRADE_EVIDENCE_CONFLICT' | 'NO_TRADE_TIME_FILTER' | 'NO_TRADE_CHOPPY_REGIME';
   let decisionRationale = '';
@@ -724,7 +729,7 @@ export function evaluateEvidenceStack(params: {
     decisionRationale = `NO TRADE: Low ADX (${adx.adx}) indicates choppy regime. Naked option buying is strictly prohibited.`;
   } else if (conflictDetected) {
     finalDecision = 'NO_TRADE_EVIDENCE_CONFLICT';
-    decisionRationale = `NO TRADE / EVIDENCE CONFLICT: ${passedPillarsCount}/8 pillars passed (Score: ${totalConfluenceScore}/100). Conflicts: ${conflictReasons[0] || 'Insufficient statistical confluence'}`;
+    decisionRationale = `NO TRADE / EVIDENCE CONFLICT: ${passedPillarsCount}/8 pillars passed (Score: ${totalConfluenceScore}/100, Hurdle: ${minScoreHurdle}). Conflicts: ${conflictReasons[0] || 'Insufficient statistical confluence'}`;
   } else {
     finalDecision = isBull ? 'EXECUTE_BUY' : 'EXECUTE_SELL';
     decisionRationale = `HIGH EDGE CONFLUENCE (${totalConfluenceScore}/100): ${passedPillarsCount}/8 independent pillars verified without conflicting signals.`;

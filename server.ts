@@ -397,6 +397,16 @@ async function startServer() {
         });
       }
 
+      // Check live quote availability
+      if (price <= 0 && liveLtp <= 0) {
+        return res.json({
+          approved: false,
+          rejectionCode: 'NO_LIVE_QUOTE',
+          reason: `No live quote available for ${tradingsymbol}. Live tick stream required before pre-trade approval.`,
+          timestampMs: Date.now()
+        });
+      }
+
       // Check price slippage vs live LTP (> tolerance)
       if (price > 0 && liveLtp > 0) {
         const slippagePct = Math.abs(price - liveLtp) / liveLtp * 100;
@@ -800,7 +810,7 @@ async function startServer() {
 
       // 11. Internal Live Quote & Order Book Depth Fetch from Zerodha Kite
       const quoteKey = `${effectiveExchange}:${effectiveTradingSymbol}`;
-      let liveLtp = price || 100;
+      let liveLtp = price || 0;
       let quoteDepth: any = null;
       let quoteVolume = 0;
       let quoteOI = 0;
@@ -826,6 +836,17 @@ async function startServer() {
             quoteOI = quoteItem.oi || 0;
           }
         }
+      }
+
+      // STRICT LIVE QUOTE MANDATE: Never place an order if LTP is missing or zero
+      if (liveLtp <= 0) {
+        console.warn(`[Risk Gate REJECT] Missing live quote for ${quoteKey}. LTP = 0`);
+        return res.status(400).json({
+          success: false,
+          errorType: 'NO_LIVE_QUOTE',
+          rejectionCode: 'NO_LIVE_QUOTE',
+          message: `Pre-Trade Risk Gate Failed: No live Zerodha quote available for "${effectiveTradingSymbol}". Execution blocked until live tick streams.`
+        });
       }
 
       // 12. Market Depth Absorption Test (Evaluate Top 5 Levels)

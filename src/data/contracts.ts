@@ -57,7 +57,7 @@ export function generateDynamicOptionLadder(
   let category: AssetCategory = 'NIFTY_FNO';
   if (norm.includes('BANKNIFTY')) category = 'BANKNIFTY_FNO';
   else if (norm.includes('FINNIFTY')) category = 'FINNIFTY_FNO';
-  else if (norm.includes('SENSEX')) category = 'EQUITY_INTRADAY';
+  else if (norm.includes('SENSEX')) category = 'SENSEX_FNO';
 
   const strikes = [
     { offset: -2 * step, moneynessCE: 'ITM' as const, moneynessPE: 'OTM' as const },

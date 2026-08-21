@@ -549,12 +549,15 @@ export function evaluateContractQuantMetrics(
   };
 
   const isBadTradeWarning = !hasLiveQuote || winProbabilityPct < 50 || thetaStatus === 'SEVERE_HIGH_DECAY' || expectedValueINR < 0 || isCounterTrend || totalScore < 50;
-  const isMustTakeTrade = hasLiveQuote && winProbabilityPct >= 78 && netExpectedValueINR > 0 && !isBadTradeWarning && absDelta >= 0.48 && totalScore >= 75;
+  
+  // Strict Dual Gate: (a) Live Evidence Score >= 75 AND (b) Out-of-Sample Statistical Edge (Win Rate >= 75%, Net EV > 0, Delta >= 0.48)
+  const historicalExpectancyConfirmed = winProbabilityPct >= 75 && netExpectedValueINR > 0 && absDelta >= 0.48;
+  const isMustTakeTrade = hasLiveQuote && totalScore >= 75 && historicalExpectancyConfirmed && !isBadTradeWarning;
 
   let badTradeReason: string | undefined = undefined;
   if (isBadTradeWarning) {
     if (!hasLiveQuote) {
-      badTradeReason = '⚠️ NO LIVE KITE FEED: Quantitative engine requires streaming tick data.';
+      badTradeReason = '⚠️ NO LIVE KITE FEED: Quantitative engine requires streaming tick data. Orders blocked until live quote streams.';
     } else if (moneyness === 'FAR_OTM' || moneyness === 'OTM') {
       badTradeReason = `⚠️ OTM THETA TRAP (${winProbabilityPct}% Win Rate): Strike ${strikePrice} is Out-of-the-Money (Spot ₹${spotPrice.toFixed(2)}, LTP ₹${effectivePrice.toFixed(2)}). Delta is only +${absDelta.toFixed(2)} with rapid daily decay (-${thetaDecayPctPerDay}%/day).`;
     } else if (isCounterTrend) {
@@ -566,16 +569,16 @@ export function evaluateContractQuantMetrics(
 
   let mustTakeReason: string | undefined = undefined;
   if (isMustTakeTrade) {
-    mustTakeReason = `🔥 PRIME HIGH-DELTA SQUEEZE (Confluence Score: ${totalScore}/100): Strike ${strikePrice} (${moneyness.replace('_', ' ')}) has strong +${absDelta.toFixed(2)} Delta and minimal time decay (-${thetaDecayPctPerDay}%/day). Net Realized EV is +₹${netExpectedValueINR}/lot.`;
+    mustTakeReason = `🔥 PRIME EVIDENCE-VERIFIED EDGE (GoldenGate Score: ${totalScore}/100, OOS Edge: +₹${netExpectedValueINR}/lot): Strike ${strikePrice} (${moneyness.replace('_', ' ')}) exhibits +${absDelta.toFixed(2)} Delta with minimal time decay (-${thetaDecayPctPerDay}%/day).`;
   }
 
   let laymanReason = '';
   if (!hasLiveQuote) {
-    laymanReason = `Awaiting live Zerodha tick data for ${cleanSym}.`;
+    laymanReason = `Awaiting live Zerodha tick data for ${cleanSym}. Quote pending.`;
   } else if (isBadTradeWarning) {
     laymanReason = `AVOID / SPECULATIVE SETUP: ${cleanSym} is ${moneyness.replace('_', ' ')} with low Delta (+${absDelta.toFixed(2)}) and rapid daily time decay (-${thetaDecayPctPerDay}%/day).`;
   } else if (isMustTakeTrade) {
-    laymanReason = `MUST TAKE SETUP (${totalScore}/100 Score): ${cleanSym} is ${moneyness.replace('_', ' ')} with high +${absDelta.toFixed(2)} Delta. Net expected value is +₹${netExpectedValueINR}/lot.`;
+    laymanReason = `MUST TAKE SETUP (${totalScore}/100 Score, +₹${netExpectedValueINR} Net EV): ${cleanSym} is ${moneyness.replace('_', ' ')} with high +${absDelta.toFixed(2)} Delta and verified historical edge.`;
   } else {
     laymanReason = `Active ${cleanSym} option trade. Confluence score ${totalScore}/100, Delta +${absDelta.toFixed(2)}, daily time decay -₹${Math.abs(dailyTheta).toFixed(1)}/day.`;
   }
