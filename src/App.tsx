@@ -1251,13 +1251,16 @@ export default function App() {
       <AutoTraderConfirmModal
         isOpen={isAutoTraderConfirmOpen}
         onClose={() => setIsAutoTraderConfirmOpen(false)}
-        onConfirm={() => {
+        onConfirm={(mode) => {
           setIsAutoTrading(true);
-          triggerUserFeedback('🤖 SELECTIVE AUTO-TRADER ACTIVATED! Monitoring signals & taking trades only with high profit confidence.');
-          addToast('SUCCESS', 'Selective Auto-Trader Activated', 'Auto-Trader is active. Mandate: Takes trades only with ≥80% win probability & R:R ≥ 2.0. No forced orders.');
-          addLog('SYSTEM', '🤖 SELECTIVE AUTO-TRADER ACTIVATED: Max 3 concurrent positions, 1L capital limit, ≥80% profit confidence gate.');
+          const isLive = mode === 'LIVE';
+          triggerUserFeedback(`🤖 SELECTIVE ${mode} AUTO-TRADER ACTIVATED! Monitoring signals & taking trades only with high profit confidence.`);
+          addToast('SUCCESS', `${mode} Auto-Trader Activated`, `Auto-Trader is active in ${mode} mode. Mandate: Takes trades only with verified high edge confluence.`);
+          addLog('SYSTEM', `🤖 ${mode} AUTO-TRADER ACTIVATED: Mode: ${mode}, Max 3 concurrent positions, 1L capital limit, dual statistical gate.`);
         }}
         capitalINR={autoTradingCapital}
+        zerodhaCreds={zerodhaCreds}
+        quotesCount={Object.keys(quotes).length}
       />
 
       {/* Emergency Stop Modal */}

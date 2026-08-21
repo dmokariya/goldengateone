@@ -344,7 +344,7 @@ export function evaluateContractQuantMetrics(
   if (isNifty) category = 'NIFTY_FNO';
   else if (isBankNifty) category = 'BANKNIFTY_FNO';
   else if (isFinNifty) category = 'FINNIFTY_FNO';
-  else if (isSensex) category = 'EQUITY_INTRADAY'; // SENSEX traded on BSE
+  else if (isSensex) category = 'SENSEX_FNO';
 
   const changePct = liveQuote?.changePct ?? 0;
   const hasLiveQuote = liveQuote && typeof liveQuote.lastPrice === 'number' && liveQuote.lastPrice > 0;

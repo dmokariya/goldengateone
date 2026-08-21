@@ -98,18 +98,11 @@ export const EodSummaryModal: React.FC<EodSummaryModalProps> = ({
 
               {journalRecords.map((trade, idx) => {
                 const isWin = trade.result === 'WIN';
-                
-                // Simulate EOD settlement price relative to exit price
-                // For winning call options, contract might settle at slightly lower or higher after decay
-                const simulatedEodPrice = isWin 
-                  ? +(trade.exitPrice * (0.82 + Math.random() * 0.25)).toFixed(2)
-                  : +(trade.exitPrice * (0.65 + Math.random() * 0.20)).toFixed(2);
+                const observedExitPrice = trade.exitPrice;
 
                 const savedMoneyOrMissedGain = isWin
-                  ? (simulatedEodPrice < trade.exitPrice)
-                    ? `🛡️ SAVED CAPITAL: Contract crashed to ₹${simulatedEodPrice} by 3:30 PM EOD close. Exiting at ₹${trade.exitPrice} saved ₹${Math.round((trade.exitPrice - simulatedEodPrice) * trade.quantity).toLocaleString('en-IN')} from Theta decay!`
-                    : `📈 STRONG TREND: Contract continued rallying to ₹${simulatedEodPrice} by 3:30 PM EOD close. Solid disciplined profit booking.`
-                  : `🛡️ RISK CONTROL: Stopped out at ₹${trade.exitPrice}. Contract fell further to ₹${simulatedEodPrice} by 3:30 PM EOD close. SL prevented severe drawdown!`;
+                  ? `📈 DISCIPLINED REALIZED EXIT: Locked in +₹${trade.realizedPnL.toLocaleString('en-IN')} (+${trade.realizedPnLPct.toFixed(2)}%) at ₹${observedExitPrice}. Exit rule executed: ${trade.exitReason}.`
+                  : `🛡️ RISK PROTECTION: Stopped out at ₹${observedExitPrice} (-${Math.abs(trade.realizedPnLPct).toFixed(2)}%). Exit rule (${trade.exitReason}) protected account capital.`;
 
                 return (
                   <div
@@ -136,7 +129,7 @@ export const EodSummaryModal: React.FC<EodSummaryModalProps> = ({
                       </div>
                     </div>
 
-                    {/* Entry, Exit & EOD Settlement Price Grid */}
+                    {/* Entry, Exit & Trade Duration Price Grid */}
                     <div className="grid grid-cols-3 gap-2 bg-[#0D1117] p-2.5 rounded border border-gray-800 text-center">
                       <div>
                         <span className="text-[8.5px] text-gray-400 uppercase block font-bold">Entered At</span>
@@ -146,12 +139,12 @@ export const EodSummaryModal: React.FC<EodSummaryModalProps> = ({
                       <div>
                         <span className="text-[8.5px] text-amber-400 uppercase block font-bold">Exited At</span>
                         <span className="text-xs font-bold text-amber-300 mt-0.5 block">₹{trade.exitPrice.toFixed(2)}</span>
-                        <span className="text-[8.5px] text-amber-300/80 block">{trade.closedAtTime} ({trade.exitReason})</span>
+                        <span className="text-[8.5px] text-amber-300/80 block">{trade.closedAtTime}</span>
                       </div>
                       <div>
-                        <span className="text-[8.5px] text-purple-400 uppercase block font-bold">3:30 PM EOD Settlement</span>
-                        <span className="text-xs font-bold text-purple-200 mt-0.5 block">₹{simulatedEodPrice.toFixed(2)}</span>
-                        <span className="text-[8.5px] text-purple-300/80 block">Market Close</span>
+                        <span className="text-[8.5px] text-purple-400 uppercase block font-bold">Exit Execution Rule</span>
+                        <span className="text-xs font-bold text-purple-200 mt-0.5 block">{trade.exitReason}</span>
+                        <span className="text-[8.5px] text-purple-300/80 block">{trade.holdingTimeMins || 0} mins holding</span>
                       </div>
                     </div>
 

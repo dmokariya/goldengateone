@@ -155,15 +155,15 @@ export function analyzeQuantJournal(): QuantLearningSummary {
   const confidenceAdjustmentMap: Record<string, number> = { CALL: 0, PUT: 0, CAS: 0, EQUITY: 0 };
 
   if (putTrades.length > 0 && putWinRatePct < 40) {
-    learnedRules.push(`⚠️ LEARNED RULE #1: Put Options (PE) during Bullish market regime showed weak win rate (${putWinRatePct}%). Applied -15% confidence penalty to PE signals.`);
+    learnedRules.push(`⚠️ EMPIRICAL RULE #1: Put Options (PE) during current regime showed win rate of ${putWinRatePct}%. Applied -15% confidence penalty to PE signals.`);
     confidenceAdjustmentMap.PUT = -15;
-  } else {
-    learnedRules.push(`🟢 RULE #1: Call Options (CE) aligned with Bullish trend maintain high win consistency (${callWinRatePct || 88}%).`);
-    confidenceAdjustmentMap.CALL = 5;
+  } else if (callTrades.length > 0) {
+    learnedRules.push(`🟢 EMPIRICAL RULE #1: Call Options (CE) observed win consistency of ${callWinRatePct}%.`);
+    confidenceAdjustmentMap.CALL = callWinRatePct >= 65 ? 5 : 0;
   }
 
   if (timeStopExits > 0) {
-    learnedRules.push(`⏱️ LEARNED RULE #2: Exited ${timeStopExits} stagnant trades at 12 mins. Prevented average ₹1,450 Theta decay loss per trade.`);
+    learnedRules.push(`⏱️ EMPIRICAL RULE #2: Exited ${timeStopExits} stagnant trades at max holding duration to safeguard against option Theta decay.`);
   }
 
   if (tslExits > 0) {

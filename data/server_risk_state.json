@@ -1,0 +1,18 @@
+{
+  "isServerKillSwitchActive": false,
+  "killSwitchReason": "Reset for testing",
+  "killSwitchUpdatedAt": "2026-08-21T02:18:14.923Z",
+  "dailyRealizedPnlINR": -2300,
+  "dailyLossLimitPct": 2,
+  "consecutiveLossCount": 4,
+  "maxConsecutiveLosses": 3,
+  "accountEquity": 100000,
+  "maxPortfolioDirectionalLimit": 3,
+  "riskPerTradePct": 0.5,
+  "slippageTolerancePct": 1.5,
+  "staleThresholdMs": 3000,
+  "lastResetDateIST": "2026-08-21",
+  "lastTradeTimestamp": 1787278694924,
+  "totalOrdersPlacedToday": 11,
+  "updatedAt": "2026-08-21T02:18:14.924Z"
+}

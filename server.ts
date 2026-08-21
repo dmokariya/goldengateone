@@ -283,6 +283,17 @@ async function startServer() {
     }
   });
 
+  // 0.105 Zerodha Instrument Master Status Endpoint
+  app.get("/api/zerodha/instruments-status", (req, res) => {
+    const status = getInstrumentsStatus();
+    res.json({
+      success: true,
+      count: status.count,
+      lastFetchedAt: status.lastFetchedAt,
+      isReady: status.isReady
+    });
+  });
+
   // 0.11 Broker Reconciliation Loop Endpoint
   app.post("/api/zerodha/reconcile", async (req, res) => {
     try {
