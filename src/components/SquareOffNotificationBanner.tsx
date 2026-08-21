@@ -22,21 +22,23 @@ export const SquareOffNotificationBanner: React.FC<SquareOffNotificationBannerPr
   useEffect(() => {
     const updateClock = () => {
       const now = new Date();
-      // Format as IST time (e.g., 15:24:30)
-      const hours = now.getHours();
-      const minutes = now.getMinutes();
-      const seconds = now.getSeconds();
+      // Format as IST time (Asia/Kolkata)
+      const istDate = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+      const hours = istDate.getHours();
+      const minutes = istDate.getMinutes();
+      const seconds = istDate.getSeconds();
       
       const timeString = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')} IST`;
       setCurrentTimeStr(timeString);
 
-      // Target time: 15:25 (3:25 PM)
-      const targetTimeMs = new Date().setHours(15, 25, 0, 0);
-      const diffMins = Math.round((targetTimeMs - now.getTime()) / 60000);
+      // Target time: 15:25 (3:25 PM IST)
+      const istTarget = new Date(istDate);
+      istTarget.setHours(15, 25, 0, 0);
+      const diffMins = Math.round((istTarget.getTime() - istDate.getTime()) / 60000);
       setMinsUntil325(diffMins);
 
       // Trigger condition: hours === 15 && minutes >= 25 OR simulation mode
-      if ((hours === 15 && minutes >= 25) || isSimulationActive) {
+      if ((hours === 15 && minutes >= 25 && hours < 16) || isSimulationActive) {
         setIs325Triggered(true);
       } else {
         setIs325Triggered(false);

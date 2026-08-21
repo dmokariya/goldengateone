@@ -8,8 +8,9 @@ import {
   TradeOrder,
   TradeableContract
 } from './types';
-import { generateLiveSignals, getOrCreateSignalForSymbol, generateFreshRecalibratedSignal, evaluateContractQuantMetrics } from './utils/quantEngine';
+import { generateLiveSignals, getOrCreateSignalForSymbol, generateFreshRecalibratedSignal, evaluateContractQuantMetrics, scanGoldenFunnelUniverse } from './utils/quantEngine';
 import { recordClosedTradeToJournal, getQuantTradeJournal } from './utils/quantMemory';
+import { lookupLiveQuote, calculateRealtimePnL, evaluateRiskGuardianExit } from './utils/quoteLookup';
 import { ZerodhaConnectionHeader } from './components/ZerodhaConnectionHeader';
 import { ContractCatalog } from './components/ContractCatalog';
 import { QuickSelectRibbon } from './components/QuickSelectRibbon';
@@ -27,8 +28,12 @@ import { TradingPerformanceSummary } from './components/TradingPerformanceSummar
 import { ToastContainer, ToastNotification } from './components/ToastContainer';
 import { EdgeEngineDashboard } from './components/EdgeEngineDashboard';
 import { StrategyResearchLab } from './components/StrategyResearchLab';
+import { HelpKnowledgeModal } from './components/HelpKnowledgeModal';
+import { DataFilesLogbook } from './components/DataFilesLogbook';
+import { LiveTradingCautionBanner } from './components/LiveTradingCautionBanner';
+import { LiveTradingCornerIndicator } from './components/LiveTradingCornerIndicator';
 import { getDynamicTradeableContracts, DEFAULT_UNDERLYING_SPOTS } from './data/contracts';
-import { Zap, Brain, Layers, AlertOctagon, RefreshCw, Home, ShieldAlert, CheckCircle2, ShieldCheck, Sparkles, Scale, FlaskConical } from 'lucide-react';
+import { Zap, Brain, Layers, AlertOctagon, RefreshCw, Home, ShieldAlert, CheckCircle2, ShieldCheck, Sparkles, Scale, FlaskConical, HelpCircle, Database, FileText } from 'lucide-react';
 
 export default function App() {
   // Zerodha API Credentials State
@@ -111,6 +116,8 @@ export default function App() {
   const [recentlyExitedSymbols, setRecentlyExitedSymbols] = useState<Record<string, { exitPrice: number; reason: string; exitedAt: string }>>({});
   const [isJournalModalOpen, setIsJournalModalOpen] = useState<boolean>(false);
   const [isEodSummaryModalOpen, setIsEodSummaryModalOpen] = useState<boolean>(false);
+  const [isHelpModalOpen, setIsHelpModalOpen] = useState<boolean>(false);
+  const [isDataFilesModalOpen, setIsDataFilesModalOpen] = useState<boolean>(false);
   const [selectedModalSignal, setSelectedModalSignal] = useState<LiveTradeSignal | null>(null);
   const [isTradeDetailsModalOpen, setIsTradeDetailsModalOpen] = useState<boolean>(false);
 
@@ -119,8 +126,35 @@ export default function App() {
   const [isAutoTraderConfirmOpen, setIsAutoTraderConfirmOpen] = useState<boolean>(false);
   const [isEmergencyStopOpen, setIsEmergencyStopOpen] = useState<boolean>(false);
   const [autoTradingCapital, setAutoTradingCapital] = useState<number>(100000); // ₹1,00,000 Allocation
-  const [showEdgeEngine, setShowEdgeEngine] = useState<boolean>(true);
-  const [showResearchLab, setShowResearchLab] = useState<boolean>(true);
+  const [showEdgeEngine, setShowEdgeEngine] = useState<boolean>(false);
+  const [showResearchLab, setShowResearchLab] = useState<boolean>(false);
+
+  // Trading Execution Mode: 'SHADOW' (Paper / Sandbox with Real Live Quotes) vs 'LIVE' (Real Zerodha Kite Orders)
+  const [tradingMode, setTradingMode] = useState<'SHADOW' | 'LIVE'>(() => {
+    return (localStorage.getItem('goldengate_trading_mode') as 'SHADOW' | 'LIVE') || 'SHADOW';
+  });
+
+  // Active View Tab: 'SNIPER_HUB' (Default Live Sniper Hub) | 'POSITIONS_ORDERS' | 'QUANT_LAB' (Under blanket) | 'JOURNAL_LOGS'
+  const [activeTab, setActiveTab] = useState<'SNIPER_HUB' | 'POSITIONS_ORDERS' | 'QUANT_LAB' | 'JOURNAL_LOGS'>('SNIPER_HUB');
+
+  // Hub Layout Mode: 'SIDE_BY_SIDE' (Side-by-side Universe + Signals) | 'TABS' | 'STACKED'
+  const [hubLayoutMode, setHubLayoutMode] = useState<'SIDE_BY_SIDE' | 'TABS' | 'STACKED'>('SIDE_BY_SIDE');
+  const [hubSubTab, setHubSubTab] = useState<'CONTRACTS' | 'SIGNALS'>('SIGNALS');
+
+  // Scanner Universe Filter: 'ALL' | 'ALPHA_PICK' | 'TOP_3' | 'TOP_12' | 'NIFTY' | 'BANKNIFTY' | 'STOCKS'
+  const [scannerFilter, setScannerFilter] = useState<'ALL' | 'ALPHA_PICK' | 'TOP_3' | 'TOP_12' | 'NIFTY' | 'BANKNIFTY' | 'STOCKS'>('ALL');
+
+  const handleToggleTradingMode = (newMode: 'SHADOW' | 'LIVE') => {
+    setTradingMode(newMode);
+    localStorage.setItem('goldengate_trading_mode', newMode);
+    if (newMode === 'SHADOW') {
+      triggerUserFeedback('🟢 Switched to SHADOW MODE: Safe sandbox trading with live market prices. No real capital at risk.');
+      addToast('INFO', 'Shadow Sandbox Active', 'Orders will be simulated with real live quotes without touching your Zerodha account funds.');
+    } else {
+      triggerUserFeedback('🔴 Switched to LIVE MODE: Real orders will be dispatched directly to your Zerodha Kite broker account.');
+      addToast('WARNING', 'Live Zerodha Mode Active', 'Real orders will execute on Zerodha Kite API with actual capital.');
+    }
+  };
 
   // Positions and Order History State (with Local Storage Persistence)
   const [positions, setPositions] = useState<ActivePosition[]>(() => {
@@ -258,7 +292,11 @@ export default function App() {
           ...dynamicUniverse.map((c) => c.tradingsymbol),
           ...dynamicUniverse.map((c) => c.symbol),
           ...positions.map((p) => p.tradingsymbol),
-          ...positions.map((p) => p.symbol)
+          ...positions.map((p) => p.symbol),
+          ...orderHistory.map((o) => o.tradingsymbol),
+          ...orderHistory.map((o) => o.symbol),
+          ...liveSignals.map((s) => s.symbol),
+          ...liveSignals.map((s) => s.zerodhaPayload?.tradingsymbol)
         ])
       ).filter(Boolean);
 
@@ -295,18 +333,17 @@ export default function App() {
         const syncTime = new Date().toLocaleTimeString();
         setLastQuoteSyncTime(syncTime);
 
-        // Update positions with current prices
+        // Update positions with current prices using normalized quote resolver
         setPositions((prev) =>
           prev.map((p) => {
-            const q = data.quotes[p.symbol] || data.quotes[p.tradingsymbol];
+            const q = lookupLiveQuote(p.symbol, p.tradingsymbol, data.quotes);
             if (q && typeof q.lastPrice === 'number' && p.status === 'OPEN') {
               const livePx = q.lastPrice;
-              const diff = p.direction === 'BUY' ? livePx - p.entryPrice : p.entryPrice - livePx;
-              const pnlVal = diff * p.quantity;
-              const pnlPct = p.entryPrice > 0 ? (diff / p.entryPrice) * 100 : 0;
+              const { pnlVal, pnlPct } = calculateRealtimePnL(p.entryPrice, livePx, p.quantity, p.direction);
               return {
                 ...p,
                 currentPrice: livePx,
+                highestPriceReached: Math.max(p.highestPriceReached || p.entryPrice, livePx),
                 unrealizedPnL: pnlVal,
                 unrealizedPnLPct: pnlPct
               };
@@ -315,14 +352,30 @@ export default function App() {
           })
         );
 
+        // Update order history with live LTP and unrealized PnL
+        setOrderHistory((prev) =>
+          prev.map((ord) => {
+            const q = lookupLiveQuote(ord.symbol, ord.tradingsymbol, data.quotes);
+            if (q && typeof q.lastPrice === 'number') {
+              const livePx = q.lastPrice;
+              const { pnlVal, pnlPct } = calculateRealtimePnL(ord.price, livePx, ord.quantity, ord.side);
+              return {
+                ...ord,
+                currentLtp: livePx,
+                unrealizedPnL: pnlVal,
+                unrealizedPnLPct: pnlPct
+              };
+            }
+            return ord;
+          })
+        );
+
         // Update liveSignals with real-time LTP & dynamic quant re-evaluation using actual spot indices
         setLiveSignals((prevSignals) =>
           prevSignals.map((sig) => {
-            const q = data.quotes[sig.symbol] ||
-                      (sig.zerodhaPayload?.tradingsymbol ? data.quotes[sig.zerodhaPayload.tradingsymbol] : undefined) ||
-                      Object.entries(data.quotes).find(([k]) => k.toUpperCase() === sig.symbol.toUpperCase() || sig.symbol.toUpperCase().includes(k.toUpperCase()))?.[1];
-            if (q && typeof (q as any).lastPrice === 'number' && (q as any).lastPrice > 0) {
-              const liveLtp = (q as any).lastPrice;
+            const q = lookupLiveQuote(sig.symbol, sig.zerodhaPayload?.tradingsymbol, data.quotes);
+            if (q && typeof q.lastPrice === 'number' && q.lastPrice > 0) {
+              const liveLtp = q.lastPrice;
               const evaluated = evaluateContractQuantMetrics(sig.symbol, liveLtp, q, data.spotIndices);
               return {
                 ...sig,
@@ -376,63 +429,158 @@ export default function App() {
     }
   };
 
-  // Auto-Sync 5s Timer for Live Ticker
+  // High-Frequency Auto-Sync Timer (1.2s rapid tick streaming for zero LTP lag)
   useEffect(() => {
     handleFetchLiveQuotes(true);
     if (!autoSyncQuotes) return;
 
     const interval = setInterval(() => {
       handleFetchLiveQuotes(true);
-    }, 5000);
+    }, 1200);
 
     return () => clearInterval(interval);
-  }, [autoSyncQuotes, zerodhaCreds.accessToken]);
+  }, [autoSyncQuotes, zerodhaCreds.accessToken, positions.length, orderHistory.length]);
 
-  // 🤖 AUTO-TRADING ENGINE LOOP (Strict Universal Rule: NO LIVE DATA = NO ORDER)
+  // Execute Shadow Paper Trade (Zero Risk Sandbox Mode with Live LTP)
+  const handleExecuteSignalShadow = async (signal: LiveTradeSignal) => {
+    const q = lookupLiveQuote(signal.symbol, signal.zerodhaPayload?.tradingsymbol, quotes);
+    const currentLtp = q?.lastPrice ?? signal.currentLtp ?? signal.entryPrice;
+    const quantity = signal.zerodhaPayload?.quantity || 25;
+    const shadowOrderId = `SHD_${Date.now()}`;
+    const timestamp = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+
+    const slPrice = signal.stopLossPrice > 0 ? signal.stopLossPrice : +(signal.direction === 'BUY' ? currentLtp * 0.90 : currentLtp * 1.10).toFixed(2);
+    const tgPrice = signal.targetPrice > 0 ? signal.targetPrice : +(signal.direction === 'BUY' ? currentLtp * 1.15 : currentLtp * 0.85).toFixed(2);
+
+    const newOrder: TradeOrder = {
+      id: shadowOrderId,
+      timestamp,
+      symbol: signal.symbol,
+      tradingsymbol: signal.zerodhaPayload?.tradingsymbol || signal.symbol,
+      type: 'LIMIT',
+      side: signal.direction,
+      quantity,
+      price: currentLtp,
+      latencyMs: 12,
+      status: 'FILLED',
+      mode: 'SHADOW',
+      currentLtp: currentLtp,
+      unrealizedPnL: 0,
+      unrealizedPnLPct: 0
+    };
+
+    setOrderHistory((prev) => [newOrder, ...prev]);
+
+    const newPos: ActivePosition = {
+      id: `POS_SHD_${Date.now()}`,
+      orderId: shadowOrderId,
+      symbol: signal.symbol,
+      tradingsymbol: signal.zerodhaPayload?.tradingsymbol || signal.symbol,
+      exchange: 'NFO',
+      direction: signal.direction,
+      quantity,
+      entryPrice: currentLtp,
+      currentPrice: currentLtp,
+      highestPriceReached: currentLtp,
+      stopLossPrice: slPrice,
+      targetPrice: tgPrice,
+      trailingStopLossPrice: slPrice,
+      trailingDistancePct: 5.0,
+      status: 'OPEN',
+      unrealizedPnL: 0,
+      unrealizedPnLPct: 0,
+      timestamp,
+      openedAtMs: Date.now(),
+      holdingTimeMins: 0,
+      maxAllowedMins: 12
+    };
+
+    setPositions((prev) => [newPos, ...prev]);
+    setTimeout(() => handleFetchLiveQuotes(true), 50);
+    triggerUserFeedback(`⚡ Shadow Paper Trade Executed: ${signal.symbol} (${quantity} Qty @ ₹${currentLtp.toFixed(2)})`);
+    addToast('SUCCESS', 'Shadow Order Executed', `Simulated Paper Trade for ${signal.symbol} @ ₹${currentLtp.toFixed(2)}`);
+
+    try {
+      await fetch('/api/data-files/log-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'SHADOW',
+          order: newOrder
+        })
+      });
+    } catch {
+      // silent
+    }
+  };
+
+  // 🛡️ CONTINUOUS LIVE RISK GUARDIAN (Monitors ALL Open Positions for SL, TSL, Target, & Time-Stop)
+  useEffect(() => {
+    const riskInterval = setInterval(() => {
+      const openPositions = positions.filter((p) => p.status === 'OPEN');
+      if (openPositions.length === 0) return;
+
+      openPositions.forEach((pos) => {
+        const q = lookupLiveQuote(pos.symbol, pos.tradingsymbol, quotes);
+        const livePrice = q?.lastPrice ?? pos.currentPrice;
+
+        // Calculate holding time
+        const holdingMins = pos.openedAtMs ? Math.floor((Date.now() - pos.openedAtMs) / 60000) : (pos.holdingTimeMins || 0);
+
+        const evaluation = evaluateRiskGuardianExit(
+          {
+            symbol: pos.symbol,
+            direction: pos.direction,
+            entryPrice: pos.entryPrice,
+            currentPrice: livePrice,
+            stopLossPrice: pos.stopLossPrice,
+            targetPrice: pos.targetPrice,
+            trailingStopLossPrice: pos.trailingStopLossPrice,
+            highestPriceReached: Math.max(pos.highestPriceReached || pos.entryPrice, livePrice),
+            holdingTimeMins: holdingMins,
+            maxAllowedMins: pos.maxAllowedMins || 12
+          },
+          livePrice
+        );
+
+        // Update trailing stop loss if adjusted upward
+        if (evaluation.suggestedTSL && evaluation.suggestedTSL !== pos.trailingStopLossPrice) {
+          setPositions((prev) =>
+            prev.map((p) => (p.id === pos.id ? { ...p, trailingStopLossPrice: evaluation.suggestedTSL, holdingTimeMins: holdingMins } : p))
+          );
+        }
+
+        // Automatic Exit Trigger when Risk Rule is Breached
+        if (evaluation.shouldExit && evaluation.exitReason) {
+          addLog(
+            'SIGNAL',
+            `🛡️ [RISK GUARDIAN AUTO-EXIT] ${pos.symbol} (${pos.direction}): ${evaluation.description}`,
+            pos.symbol
+          );
+          addToast(
+            evaluation.exitReason === 'TARGET_HIT' ? 'SUCCESS' : 'WARNING',
+            `Risk Guardian: ${evaluation.exitReason.replace(/_/g, ' ')}`,
+            evaluation.description
+          );
+          handleExitPosition(pos, evaluation.exitReason);
+        }
+      });
+    }, 2000);
+
+    return () => clearInterval(riskInterval);
+  }, [positions, quotes]);
+
+  // 🤖 AUTO-TRADING ENGINE SCANNER (Requires Universal Rule: Live Feed Provenance)
   useEffect(() => {
     if (!isAutoTrading) return;
 
     const interval = setInterval(() => {
-      // UNIVERSAL RULE ENFORCEMENT:
       if (quoteSource !== 'ZERODHA_KITE_LIVE') {
         addLog('SYSTEM', '⛔ AUTO-TRADER HALTED: Universal Rule Active (NO LIVE DATA = NO SIGNAL = NO ORDER). Waiting for Zerodha Kite live feed.');
         return;
       }
 
-      const openPositions = positions.filter((p) => p.status === 'OPEN');
-
-      // 1. Monitor Open Positions for TSL & Exit Conditions
-      openPositions.forEach((pos) => {
-        const livePrice = quotes[pos.symbol]?.lastPrice ?? pos.currentPrice;
-        const diff = pos.direction === 'BUY' ? livePrice - pos.entryPrice : pos.entryPrice - livePrice;
-        const pnlPct = pos.entryPrice > 0 ? (diff / pos.entryPrice) * 100 : 0;
-
-        let newTSL = pos.trailingStopLossPrice || (pos.entryPrice * 0.85);
-        if (pnlPct >= 5.0 && newTSL < pos.entryPrice) {
-          newTSL = pos.entryPrice;
-          addLog('SYSTEM', `🛡️ Auto-Trader: +5% profit hit on ${pos.symbol}! Trailing Stop Loss moved to Break-even (₹${pos.entryPrice.toFixed(2)}).`, pos.symbol);
-          addToast('SUCCESS', 'TSL Adjusted to Break-even', `+5% profit reached on ${pos.symbol}. Stop loss protected at ₹${pos.entryPrice.toFixed(2)}.`);
-        }
-        if (pnlPct >= 10.0 && newTSL < pos.entryPrice * 1.05) {
-          newTSL = +(pos.entryPrice * 1.05).toFixed(2);
-          addLog('SYSTEM', `🛡️ Auto-Trader: +10% profit hit on ${pos.symbol}! Trailing Stop Loss locked at +5% profit floor (₹${newTSL}).`, pos.symbol);
-          addToast('SUCCESS', 'Profit Floor Locked', `+10% profit reached on ${pos.symbol}. Locked +5% minimum profit floor at ₹${newTSL}.`);
-        }
-
-        if (newTSL !== pos.trailingStopLossPrice) {
-          setPositions((prev) => prev.map((p) => (p.id === pos.id ? { ...p, trailingStopLossPrice: newTSL } : p)));
-        }
-
-        if (pos.direction === 'BUY' && livePrice <= newTSL) {
-          addLog('SIGNAL', `🤖 AUTO-TRADER EXIT: Trailing Stop Loss hit on ${pos.symbol} @ ₹${livePrice}.`, pos.symbol);
-          handleExitPosition(pos, 'TRAILING_STOP_PROFIT_LOCKED');
-        } else if (pos.direction === 'BUY' && livePrice >= pos.targetPrice) {
-          addLog('SIGNAL', `🤖 AUTO-TRADER EXIT: Target Price hit on ${pos.symbol} @ ₹${livePrice}.`, pos.symbol);
-          handleExitPosition(pos, 'TARGET_HIT');
-        }
-      });
-
-      // 2. Selective Auto-Trade Scanning: Requires Live Provenance (source === 'ZERODHA_KITE_LIVE')
+      // Selective Auto-Trade Scanning: Max 3 open positions
       const currentOpen = positions.filter((p) => p.status === 'OPEN');
       if (currentOpen.length < 3) {
         const highlyConfidentCandidates = liveSignals.filter((sig) => {
@@ -453,7 +601,6 @@ export default function App() {
           handleExecuteSignalOnZerodha(topSig);
         }
       }
-
     }, 4000);
 
     return () => clearInterval(interval);
@@ -650,12 +797,101 @@ export default function App() {
     const orderType = signal.zerodhaPayload?.order_type ?? (isOpt ? 'LIMIT' : 'MARKET');
     const product = signal.zerodhaPayload?.product ?? (isOpt ? 'NRML' : 'MIS');
 
+    // SHADOW / PAPER TRADING EXECUTION (Safe Sandbox with Real Live Quotes)
+    if (tradingMode === 'SHADOW') {
+      const shadowOrderId = `SHADOW-${Date.now().toString(36).toUpperCase()}`;
+      setActiveOrderResult({
+        orderId: shadowOrderId,
+        symbol: signal.symbol,
+        direction: transactionType,
+        quantity: qty,
+        price: signal.entryPrice
+      });
+
+      const newOrder: TradeOrder = {
+        id: shadowOrderId,
+        symbol: signal.symbol,
+        side: transactionType,
+        type: orderType,
+        price: signal.entryPrice,
+        quantity: qty,
+        status: 'FILLED',
+        timestamp: new Date().toLocaleTimeString(),
+        latencyMs: 12
+      };
+      setOrderHistory((prev) => [newOrder, ...prev]);
+
+      // Persist to server data file for permanent auditing
+      fetch('/api/data-files/record-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'SHADOW',
+          orderId: shadowOrderId,
+          symbol: signal.symbol,
+          tradingsymbol,
+          exchange,
+          direction: transactionType,
+          quantity: qty,
+          price: signal.entryPrice,
+          orderType,
+          product,
+          status: 'FILLED',
+          latencyMs: 12,
+          signalSource: 'GOLDENGATE_QUANT',
+          winProbabilityPct: signal.winProbabilityPct,
+          netExpectedValueINR: signal.netExpectedValueINR
+        })
+      }).catch((e) => console.warn('Shadow order file log warning:', e));
+
+      const initialStopLoss = signal.stopLossPrice || +(signal.entryPrice * 0.90).toFixed(2);
+      const initialTrailingSL = +(signal.entryPrice * 0.95).toFixed(2);
+
+      const newPos: ActivePosition = {
+        id: `pos-${Date.now()}`,
+        orderId: shadowOrderId,
+        symbol: signal.symbol,
+        tradingsymbol,
+        exchange,
+        direction: transactionType,
+        quantity: qty,
+        entryPrice: signal.entryPrice,
+        currentPrice: signal.entryPrice,
+        highestPriceReached: signal.entryPrice,
+        lowestPriceReached: signal.entryPrice,
+        trailingStopLossPrice: initialTrailingSL,
+        trailingDistancePct: 5.0,
+        targetPrice: signal.targetPrice,
+        stopLossPrice: initialStopLoss,
+        unrealizedPnL: 0,
+        unrealizedPnLPct: 0,
+        timestamp: new Date().toLocaleTimeString(),
+        openedAtMs: Date.now(),
+        status: 'OPEN',
+        expectedTimeHorizon: signal.expectedTimeHorizon || '15 - 30 Mins',
+        winProbabilityPct: signal.winProbabilityPct || 88,
+        holdingTimeMins: 0,
+        maxAllowedMins: 12,
+        autoTimeStopEnabled: true,
+        autoTrailingStopEnabled: true
+      };
+
+      setPositions((prev) => [newPos, ...prev.filter((p) => p.symbol !== signal.symbol)]);
+
+      addLog('FILL_BUY', `[🟢 SHADOW SANDBOX] Paper order executed for ${signal.symbol} (${qty} Qty @ ₹${signal.entryPrice}). Zero real money risked.`, signal.symbol);
+      triggerUserFeedback(`✓ [SHADOW PAPER TRADING] Executed ${signal.symbol} (${qty} Qty @ ₹${signal.entryPrice}). Order ID: ${shadowOrderId}`);
+      addToast('SUCCESS', 'Shadow Order Executed', `[SANDBOX] ${signal.symbol} (${qty} Qty @ ₹${signal.entryPrice}) added to active tracking desk.`);
+      setIsOrderModalOpen(true);
+      return;
+    }
+
+    // LIVE ZERODHA API ORDER EXECUTION
     const keyToUse = zerodhaCreds.apiKey || localStorage.getItem('zerodha_api_key') || '';
     const tokenToUse = zerodhaCreds.accessToken || localStorage.getItem('zerodha_access_token') || '';
 
     // STRICT CHECK: Disallow order routing and reject immediately if no credentials exist
     if (!keyToUse || !tokenToUse) {
-      const authError = "Order not sent: Zerodha Kite session is not connected. Please click 'LOG IN WITH ZERODHA KITE' in the top header to log in before placing trades.";
+      const authError = "Order not sent: Zerodha Kite session is not connected. Please click 'LOG IN WITH ZERODHA KITE' in the top header or switch to 'SHADOW MODE' to paper trade.";
       setActiveOrderResult({
         symbol: signal.symbol,
         direction: transactionType,
@@ -731,6 +967,29 @@ export default function App() {
         };
         setOrderHistory((prev) => [newOrder, ...prev]);
 
+        // Persist to server data file for permanent auditing
+        fetch('/api/data-files/record-order', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: 'LIVE',
+            orderId: json.orderId || `ORD-${Date.now()}`,
+            symbol: signal.symbol,
+            tradingsymbol,
+            exchange,
+            direction: transactionType,
+            quantity: qty,
+            price: signal.entryPrice,
+            orderType,
+            product,
+            status: 'FILLED',
+            latencyMs: 120,
+            signalSource: 'ZERODHA_KITE_LIVE',
+            winProbabilityPct: signal.winProbabilityPct,
+            netExpectedValueINR: signal.netExpectedValueINR
+          })
+        }).catch((e) => console.warn('Live order file log warning:', e));
+
         // Add Active Position ONLY upon confirmed execution from Zerodha
         const initialStopLoss = signal.stopLossPrice || +(signal.entryPrice * 0.90).toFixed(2);
         const initialTrailingSL = +(signal.entryPrice * 0.95).toFixed(2);
@@ -799,6 +1058,33 @@ export default function App() {
 
   // Exit Position
   const handleExitPosition = async (pos: ActivePosition, customReasonText?: string) => {
+    // SHADOW / PAPER TRADING EXIT HANDLER
+    if (tradingMode === 'SHADOW' || (pos.orderId && pos.orderId.startsWith('SHADOW-'))) {
+      const exitReason = customReasonText || 'MANUAL_SQUAREOFF';
+      recordClosedTradeToJournal(pos, exitReason);
+
+      setRecentlyExitedSymbols((prev) => ({
+        ...prev,
+        [pos.symbol]: {
+          exitPrice: pos.currentPrice,
+          reason: exitReason,
+          exitedAt: new Date().toLocaleTimeString()
+        }
+      }));
+
+      setPositions((prev) => prev.filter((p) => p.id !== pos.id));
+
+      addLog('FILL_SELL', `[🟢 SHADOW SIMULATION] Paper position exited: ${pos.symbol} @ ₹${pos.currentPrice}. P&L: ₹${pos.unrealizedPnL.toFixed(2)} (${exitReason})`, pos.symbol);
+      triggerUserFeedback(`✓ [SHADOW TRADING] Exited ${pos.symbol} @ ₹${pos.currentPrice}. Realized P&L: ₹${pos.unrealizedPnL.toFixed(2)}`);
+      addToast(
+        pos.unrealizedPnL >= 0 ? 'SUCCESS' : 'WARNING',
+        'Shadow Position Exited',
+        `[SHADOW] Exited ${pos.symbol} (${pos.quantity} Qty @ ₹${pos.currentPrice}). Realized P&L: ₹${pos.unrealizedPnL.toFixed(2)} (${exitReason}).`
+      );
+      return;
+    }
+
+    // LIVE ZERODHA API EXIT HANDLER
     const exitDirection = pos.direction === 'BUY' ? 'SELL' : 'BUY';
     addLog('FILL_SELL', `Sending square-off order for ${pos.symbol} to Zerodha...`, pos.symbol);
     addToast('INFO', 'Square-Off Order Sent', `Closing position ${pos.symbol} (${pos.quantity} Qty @ ₹${pos.currentPrice})...`);
@@ -933,7 +1219,7 @@ export default function App() {
     <div className="min-h-screen bg-[#0A0B0E] text-[#D1D5DB] font-mono flex flex-col antialiased selection:bg-[#3B82F6] selection:text-white relative">
       
       {/* Top Main Navigation Header */}
-      <header className="bg-[#111827] border-b border-[#1F2937] px-3 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between shadow-lg">
+      <header className="bg-[#111827] border-b border-[#1F2937] px-3 sm:px-6 py-2.5 sm:py-3 flex flex-wrap items-center justify-between gap-3 shadow-lg">
         
         {/* Logo / Home Button */}
         <button
@@ -946,14 +1232,43 @@ export default function App() {
           </div>
           <div>
             <h1 className="text-xs sm:text-sm font-black text-white uppercase tracking-wider flex items-center space-x-2 group-hover:text-amber-300 transition-colors">
-              <span>GoldenGate Terminal</span>
-              <span className="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded">v2.4 PRO</span>
+              <span>GoldenGate Sniper Hub</span>
+              <span className="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded font-black">v2.5 PRO</span>
             </h1>
             <p className="text-[9.5px] text-gray-400 hidden sm:block">
-              Click Home to Refresh Quotes & Load New AI Signals • Real Zerodha Kite API
+              Intraday Options & Equity Sniper Engine • Zerodha Kite Connect v3
             </p>
           </div>
         </button>
+
+        {/* PROMINENT LIVE / SHADOW TRADING MODE TOGGLE */}
+        <div className="flex items-center bg-[#0B0F19] p-1 rounded-lg border-2 border-[#1E293B] shadow-inner">
+          <button
+            onClick={() => handleToggleTradingMode('SHADOW')}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md font-black text-xs uppercase tracking-wider transition-all ${
+              tradingMode === 'SHADOW'
+                ? 'bg-emerald-600 text-white shadow-lg ring-1 ring-emerald-300'
+                : 'text-gray-400 hover:text-gray-200'
+            }`}
+            title="Shadow Paper Trading: Real live market prices, simulated risk-free execution"
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-300 animate-ping shrink-0" />
+            <span>🟢 SHADOW (SANDBOX)</span>
+          </button>
+
+          <button
+            onClick={() => handleToggleTradingMode('LIVE')}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md font-black text-xs uppercase tracking-wider transition-all ${
+              tradingMode === 'LIVE'
+                ? 'bg-rose-600 text-white shadow-lg ring-2 ring-rose-400 animate-pulse'
+                : 'text-gray-400 hover:text-gray-200'
+            }`}
+            title="Live Real Trading: Dispatches actual orders to your authenticated Zerodha Kite account"
+          >
+            <span className="w-2 h-2 rounded-full bg-rose-200 shrink-0" />
+            <span>🔴 LIVE ZERODHA</span>
+          </button>
+        </div>
 
         {/* Action Controls Ribbon */}
         <div className="flex items-center space-x-2 sm:space-x-3 text-xs">
@@ -992,48 +1307,34 @@ export default function App() {
             }`}
           >
             <Zap className="w-3.5 h-3.5 text-amber-300" />
-            <span>{isAutoTrading ? '🤖 AUTO-TRADING ON (SELECTIVE PROFIT ONLY)' : '🤖 START AUTO-TRADER'}</span>
+            <span>{isAutoTrading ? '🤖 AUTO-TRADER ON' : '🤖 START AUTO-TRADER'}</span>
           </button>
 
-          {/* GoldenGate Edge Engine Toggle Button */}
+          {/* Data Files & Permanent Orders Logbook Button */}
           <button
             onClick={() => {
-              setShowEdgeEngine((prev) => !prev);
-              triggerUserFeedback(
-                !showEdgeEngine
-                  ? 'Expanded GoldenGate Profitability & Edge Engine Dashboard'
-                  : 'Minimized Edge Engine Dashboard'
-              );
+              triggerUserFeedback('Opened Data Files, Orders & Execution Logbook Modal.');
+              setIsDataFilesModalOpen(true);
             }}
-            className={`flex items-center space-x-1.5 font-black px-3 py-1.5 rounded text-[10.5px] sm:text-[11px] shadow border transition-all uppercase tracking-wider active:scale-95 ${
-              showEdgeEngine
-                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border-emerald-300 ring-1 ring-emerald-400/40'
-                : 'bg-gray-800 hover:bg-gray-700 text-gray-200 border-gray-600'
-            }`}
+            className="flex items-center space-x-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold px-2.5 sm:px-3 py-1.5 rounded text-[10.5px] sm:text-[11px] shadow border border-slate-700 transition-all uppercase tracking-wider active:scale-95"
+            title="Data Files & Audit Hub: Real Live vs Shadow P&L, Rejected Trades, Price Errors & JSON/CSV Exports"
           >
-            <Scale className="w-3.5 h-3.5 text-amber-300" />
-            <span className="hidden sm:inline">⚡ EDGE ENGINE & MATCHER</span>
-            <span className="sm:hidden">⚡ EDGE</span>
+            <Database className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden md:inline">📁 DATA LOGBOOK</span>
+            <span className="md:hidden">📁 DATA</span>
           </button>
 
-          {/* GoldenGate Empirical Strategy Research Layer Button */}
+          {/* System Help & Knowledge Base Modal Button */}
           <button
             onClick={() => {
-              setShowResearchLab((prev) => {
-                const nextState = !prev;
-                triggerUserFeedback(nextState ? 'Opened GoldenGate Strategy Research & Factor Attribution Lab.' : 'Minimized Strategy Research Lab.');
-                return nextState;
-              });
+              triggerUserFeedback('Opened System Help & Knowledge Base Modal.');
+              setIsHelpModalOpen(true);
             }}
-            className={`flex items-center space-x-1.5 font-black px-3 py-1.5 rounded text-[10.5px] sm:text-[11px] shadow border transition-all uppercase tracking-wider active:scale-95 ${
-              showResearchLab
-                ? 'bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white border-indigo-300 ring-1 ring-indigo-400/40'
-                : 'bg-gray-800 hover:bg-gray-700 text-gray-200 border-gray-600'
-            }`}
+            className="flex items-center space-x-1.5 bg-slate-800 hover:bg-slate-700 text-blue-300 font-bold px-2.5 sm:px-3 py-1.5 rounded text-[10.5px] sm:text-[11px] shadow border border-slate-700 transition-all uppercase tracking-wider active:scale-95"
+            title="System Help & Knowledge: Greeks, Risk Controls, Execution Modes and Trading Rules"
           >
-            <FlaskConical className="w-3.5 h-3.5 text-pink-300" />
-            <span className="hidden sm:inline">🔬 STRATEGY RESEARCH LAB</span>
-            <span className="sm:hidden">🔬 RESEARCH</span>
+            <HelpCircle className="w-3.5 h-3.5 text-blue-400" />
+            <span className="hidden md:inline">ℹ️ HELP</span>
           </button>
 
           {/* Quant Memory & Journal Modal Button */}
@@ -1045,12 +1346,79 @@ export default function App() {
             className="flex items-center space-x-1.5 bg-gradient-to-r from-amber-600 via-amber-500 to-yellow-500 hover:from-amber-500 hover:to-yellow-400 text-black font-black px-3 py-1.5 rounded text-[10.5px] sm:text-[11px] shadow border border-amber-300 transition-all uppercase tracking-wider active:scale-95"
           >
             <Brain className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">🧠 QUANT MEMORY & JOURNAL</span>
+            <span className="hidden sm:inline">🧠 QUANT JOURNAL</span>
             <span className="sm:hidden">🧠 JOURNAL</span>
           </button>
 
         </div>
       </header>
+
+      {/* WORKSPACE NAVIGATION TABS (SNIPER HUB vs QUANT LAB BLANKET) */}
+      <div className="bg-[#0B0F19] border-b border-[#1E293B] px-3 sm:px-6 py-2 flex items-center justify-between overflow-x-auto">
+        <div className="flex items-center space-x-2 text-xs font-black uppercase">
+          <button
+            onClick={() => setActiveTab('SNIPER_HUB')}
+            className={`px-4 py-2 rounded-md transition-all flex items-center space-x-2 ${
+              activeTab === 'SNIPER_HUB'
+                ? 'bg-amber-500 text-black shadow-lg font-black'
+                : 'bg-gray-900 text-gray-300 hover:text-white hover:bg-gray-800'
+            }`}
+          >
+            <Zap className="w-4 h-4" />
+            <span>🎯 LIVE SNIPER HUB (ONE-CLICK TRADES)</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('POSITIONS_ORDERS')}
+            className={`px-4 py-2 rounded-md transition-all flex items-center space-x-2 ${
+              activeTab === 'POSITIONS_ORDERS'
+                ? 'bg-blue-600 text-white shadow-lg'
+                : 'bg-gray-900 text-gray-300 hover:text-white hover:bg-gray-800'
+            }`}
+          >
+            <Layers className="w-4 h-4" />
+            <span>💼 ACTIVE DESK & ORDERS ({positions.filter((p) => p.status === 'OPEN').length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('QUANT_LAB')}
+            className={`px-4 py-2 rounded-md transition-all flex items-center space-x-2 ${
+              activeTab === 'QUANT_LAB'
+                ? 'bg-indigo-600 text-white shadow-lg'
+                : 'bg-gray-900 text-gray-400 hover:text-indigo-300 hover:bg-gray-800 border border-dashed border-indigo-900/60'
+            }`}
+          >
+            <FlaskConical className="w-4 h-4 text-indigo-400" />
+            <span>🔬 QUANT LAB (UNDER BLANKET)</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('JOURNAL_LOGS')}
+            className={`px-4 py-2 rounded-md transition-all flex items-center space-x-2 ${
+              activeTab === 'JOURNAL_LOGS'
+                ? 'bg-teal-600 text-white shadow-lg'
+                : 'bg-gray-900 text-gray-300 hover:text-white hover:bg-gray-800'
+            }`}
+          >
+            <Brain className="w-4 h-4" />
+            <span>📜 AUDIT & JOURNAL LOGS</span>
+          </button>
+        </div>
+
+        <div className="hidden md:flex items-center space-x-2 text-[11px] text-gray-400">
+          <span>Mode: <strong className={tradingMode === 'LIVE' ? 'text-rose-400' : 'text-emerald-400'}>{tradingMode} TRADING</strong></span>
+          <span>•</span>
+          <span>100 Instruments Funnel Active</span>
+        </div>
+      </div>
+
+      {/* ALWAYS-PRESENT PROMINENT CAUTION BANNER WHEN IN REAL LIVE TRADING MODE */}
+      <LiveTradingCautionBanner
+        tradingMode={tradingMode}
+        onSwitchToShadow={() => handleToggleTradingMode('SHADOW')}
+        zerodhaUser={zerodhaCreds.userLoginId}
+        isZerodhaConnected={zerodhaCreds.isConnected}
+      />
 
       {/* Prominent Banner when Auto Trading is ON */}
       {isAutoTrading && (
@@ -1102,7 +1470,7 @@ export default function App() {
       {/* Main Terminal Workspace */}
       <main className="flex-1 p-3 sm:p-5 max-w-7xl mx-auto w-full space-y-5 pb-16">
         
-        {/* Step 1: Zerodha Connection Header */}
+        {/* STEP 1: Always Present Top Trading Anchor (Zerodha Connection & Quick Select) */}
         <ZerodhaConnectionHeader
           creds={zerodhaCreds}
           onUpdateCreds={setZerodhaCreds}
@@ -1110,127 +1478,562 @@ export default function App() {
           onUserActionFeedback={triggerUserFeedback}
         />
 
-        {/* Quick Select Ribbon */}
-        <QuickSelectRibbon
-          selectedContractSymbol={selectedContractSymbol}
-          liveQuotes={quotes}
-          spotIndices={spotIndices}
-          liveSignals={liveSignals}
-          isConnected={zerodhaCreds.isConnected}
-          onRefreshQuotes={() => handleFetchLiveQuotes(false)}
-          isFetchingQuotes={isFetchingQuotes}
-          onSelectContract={(sym) => {
-            setSelectedContractSymbol(sym);
-            const dynamicSig = getOrCreateSignalForSymbol(sym, liveSignals);
-            if (!liveSignals.some((s) => s.symbol.toUpperCase() === dynamicSig.symbol.toUpperCase())) {
-              setLiveSignals((prev) => [dynamicSig, ...prev]);
-            }
-            triggerUserFeedback(`Quick Selected: ${sym}`);
-          }}
-          onTriggerFeedback={triggerUserFeedback}
-        />
+        {/* ========================================================================= */}
+        {/* TAB 1: LIVE SNIPER HUB (Primary Action Desk) */}
+        {/* ========================================================================= */}
+        {activeTab === 'SNIPER_HUB' && (
+          <div className="space-y-5 animate-in fade-in duration-200">
+            {/* Quick Select Ribbon */}
+            <QuickSelectRibbon
+              selectedContractSymbol={selectedContractSymbol}
+              liveQuotes={quotes}
+              spotIndices={spotIndices}
+              liveSignals={liveSignals}
+              isConnected={zerodhaCreds.isConnected}
+              onRefreshQuotes={() => handleFetchLiveQuotes(false)}
+              isFetchingQuotes={isFetchingQuotes}
+              onSelectContract={(sym) => {
+                setSelectedContractSymbol(sym);
+                const dynamicSig = getOrCreateSignalForSymbol(sym, liveSignals);
+                if (!liveSignals.some((s) => s.symbol.toUpperCase() === dynamicSig.symbol.toUpperCase())) {
+                  setLiveSignals((prev) => [dynamicSig, ...prev]);
+                }
+                triggerUserFeedback(`Quick Selected: ${sym}`);
+              }}
+              onTriggerFeedback={triggerUserFeedback}
+            />
 
-        {/* Step 2: Contract Catalog */}
-        <ContractCatalog
-          contracts={getDynamicTradeableContracts(spotIndices)}
-          onScanSignalsForContract={(symbol, cat) => handleAiReadSignals(symbol, cat)}
-          isScanning={isAiScanning}
-          selectedContractSymbol={selectedContractSymbol}
-          onSelectContract={(sym) => {
-            setSelectedContractSymbol(sym);
-            const dynamicSig = getOrCreateSignalForSymbol(sym, liveSignals);
-            if (!liveSignals.some((s) => s.symbol.toUpperCase() === dynamicSig.symbol.toUpperCase())) {
-              setLiveSignals((prev) => [dynamicSig, ...prev]);
-            }
-          }}
-          onFetchLiveQuotes={() => handleFetchLiveQuotes(false)}
-          isFetchingQuotes={isFetchingQuotes}
-          onUserActionFeedback={triggerUserFeedback}
-        />
+            {/* Golden Funnel Multi-Asset Scanner Ribbon */}
+            <div className="bg-[#111827] border-2 border-amber-500/40 rounded-xl p-3 sm:p-4 shadow-xl">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-3 pb-3 border-b border-gray-800">
+                <div className="flex items-center space-x-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-amber-500 to-yellow-300 flex items-center justify-center text-black font-black text-sm shadow">
+                    🌪️
+                  </div>
+                  <div>
+                    <h2 className="text-xs sm:text-sm font-black text-white uppercase tracking-wider flex items-center space-x-2">
+                      <span>Golden Funnel Scanner</span>
+                      <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-full font-bold">100 Liquid Universe</span>
+                    </h2>
+                    <p className="text-[10px] text-gray-400">
+                      100 Scanned ➔ 12 Quality Filtered ➔ 3 High Confluence ➔ 1 Alpha Pick (Rank #1)
+                    </p>
+                  </div>
+                </div>
 
-        {/* GoldenGate Edge Engine & Historical Matcher Dashboard */}
-        {showEdgeEngine && (
-          <EdgeEngineDashboard
-            selectedSymbol={selectedContractSymbol || 'NIFTY'}
-            spotIndices={spotIndices}
-            liveQuotes={quotes}
-            onSelectContract={(sym) => {
-              setSelectedContractSymbol(sym);
-              const dynamicSig = getOrCreateSignalForSymbol(sym, liveSignals);
-              if (!liveSignals.some((s) => s.symbol.toUpperCase() === dynamicSig.symbol.toUpperCase())) {
-                setLiveSignals((prev) => [dynamicSig, ...prev]);
-              }
-            }}
-            onTriggerFeedback={triggerUserFeedback}
-          />
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => {
+                      const funnelResults = scanGoldenFunnelUniverse(quotes, spotIndices);
+                      setLiveSignals(funnelResults.rankedSignals);
+                      const alphaSym = funnelResults.alphaPick?.symbol || funnelResults.rankedSignals[0]?.symbol || 'NIFTY';
+                      triggerUserFeedback(`🌪️ Scanned 100 instruments: Found #${alphaSym} as Rank #1 Alpha Pick!`);
+                      addToast('SUCCESS', 'Golden Funnel Recalculated', `Scanned 100 liquid assets. #1 Alpha Pick is ${alphaSym}.`);
+                    }}
+                    className="flex items-center space-x-1.5 bg-gradient-to-r from-amber-600 to-yellow-500 hover:from-amber-500 hover:to-yellow-400 text-black font-black px-3 py-1.5 rounded-lg text-xs shadow transition-all active:scale-95 uppercase tracking-wider cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>RE-SCAN 100 ASSETS</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Funnel Pipeline Visual & Filter Chips */}
+              <div className="flex flex-wrap items-center gap-1.5 text-xs font-bold">
+                <span className="text-gray-400 text-[11px] mr-1 uppercase">Filter View:</span>
+                
+                <button
+                  onClick={() => setScannerFilter('ALL')}
+                  className={`px-2.5 py-1 rounded-md transition-all text-[11px] uppercase ${
+                    scannerFilter === 'ALL'
+                      ? 'bg-amber-500 text-black font-black shadow'
+                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  }`}
+                >
+                  🏆 ALL 100 RANKED
+                </button>
+
+                <button
+                  onClick={() => setScannerFilter('ALPHA_PICK')}
+                  className={`px-2.5 py-1 rounded-md transition-all text-[11px] uppercase flex items-center space-x-1 ${
+                    scannerFilter === 'ALPHA_PICK'
+                      ? 'bg-emerald-500 text-black font-black shadow ring-2 ring-emerald-300'
+                      : 'bg-gray-800 text-emerald-300 hover:bg-gray-700 border border-emerald-500/30'
+                  }`}
+                >
+                  <span>⭐ #1 ALPHA PICK ONLY</span>
+                </button>
+
+                <button
+                  onClick={() => setScannerFilter('TOP_3')}
+                  className={`px-2.5 py-1 rounded-md transition-all text-[11px] uppercase ${
+                    scannerFilter === 'TOP_3'
+                      ? 'bg-blue-600 text-white font-black shadow ring-1 ring-blue-300'
+                      : 'bg-gray-800 text-blue-300 hover:bg-gray-700'
+                  }`}
+                >
+                  ⚡ TOP 3 STRONG (75%+ WIN)
+                </button>
+
+                <button
+                  onClick={() => setScannerFilter('TOP_12')}
+                  className={`px-2.5 py-1 rounded-md transition-all text-[11px] uppercase ${
+                    scannerFilter === 'TOP_12'
+                      ? 'bg-purple-600 text-white font-black shadow'
+                      : 'bg-gray-800 text-purple-300 hover:bg-gray-700'
+                  }`}
+                >
+                  🎯 TOP 12 SHORTLIST
+                </button>
+
+                <button
+                  onClick={() => setScannerFilter('NIFTY')}
+                  className={`px-2.5 py-1 rounded-md transition-all text-[11px] uppercase ${
+                    scannerFilter === 'NIFTY'
+                      ? 'bg-amber-600 text-white font-black shadow'
+                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  }`}
+                >
+                  📊 NIFTY F&O
+                </button>
+
+                <button
+                  onClick={() => setScannerFilter('BANKNIFTY')}
+                  className={`px-2.5 py-1 rounded-md transition-all text-[11px] uppercase ${
+                    scannerFilter === 'BANKNIFTY'
+                      ? 'bg-amber-600 text-white font-black shadow'
+                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  }`}
+                >
+                  🏦 BANKNIFTY F&O
+                </button>
+
+                <button
+                  onClick={() => setScannerFilter('STOCKS')}
+                  className={`px-2.5 py-1 rounded-md transition-all text-[11px] uppercase ${
+                    scannerFilter === 'STOCKS'
+                      ? 'bg-teal-600 text-white font-black shadow'
+                      : 'bg-gray-800 text-teal-300 hover:bg-gray-700'
+                  }`}
+                >
+                  📈 HIGH-RVOL STOCKS
+                </button>
+              </div>
+            </div>
+
+            {/* Layout Mode Switcher Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-[#0A0B0E] p-2 rounded-xl border border-gray-800">
+              <div className="flex items-center space-x-1.5">
+                <span className="text-[11px] text-gray-400 font-bold uppercase mr-1">Workspace Layout:</span>
+                <button
+                  onClick={() => {
+                    setHubLayoutMode('SIDE_BY_SIDE');
+                    triggerUserFeedback('Switched to Side-by-Side Dual Deck Layout (Universe + Signals)');
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase transition-all flex items-center space-x-1.5 ${
+                    hubLayoutMode === 'SIDE_BY_SIDE'
+                      ? 'bg-blue-600 text-white shadow-lg border border-blue-400/40 ring-1 ring-blue-400/30'
+                      : 'bg-gray-900 text-gray-400 hover:text-white border border-gray-800'
+                  }`}
+                  title="Side-by-side split screen: Left Universe Radar, Right Quant Signals"
+                >
+                  <span>⬛ Side-by-Side (Split)</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setHubLayoutMode('TABS');
+                    triggerUserFeedback('Switched to Sub-Tabs View');
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase transition-all flex items-center space-x-1.5 ${
+                    hubLayoutMode === 'TABS'
+                      ? 'bg-purple-600 text-white shadow-lg border border-purple-400/40 ring-1 ring-purple-400/30'
+                      : 'bg-gray-900 text-gray-400 hover:text-white border border-gray-800'
+                  }`}
+                >
+                  <span>📑 Sub-Tabs</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setHubLayoutMode('STACKED');
+                    triggerUserFeedback('Switched to Stacked Vertical Layout');
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase transition-all flex items-center space-x-1.5 ${
+                    hubLayoutMode === 'STACKED'
+                      ? 'bg-gray-700 text-white shadow-lg border border-gray-500'
+                      : 'bg-gray-900 text-gray-400 hover:text-white border border-gray-800'
+                  }`}
+                >
+                  <span>⬇️ Stacked</span>
+                </button>
+              </div>
+
+              {hubLayoutMode === 'TABS' && (
+                <div className="flex items-center space-x-1 bg-gray-900 p-1 rounded-lg border border-gray-800">
+                  <button
+                    onClick={() => setHubSubTab('CONTRACTS')}
+                    className={`px-2.5 py-1 rounded text-xs font-bold ${hubSubTab === 'CONTRACTS' ? 'bg-amber-500 text-black font-black' : 'text-gray-400 hover:text-white'}`}
+                  >
+                    1. Tradable Universe (Radar)
+                  </button>
+                  <button
+                    onClick={() => setHubSubTab('SIGNALS')}
+                    className={`px-2.5 py-1 rounded text-xs font-bold ${hubSubTab === 'SIGNALS' ? 'bg-blue-600 text-white font-black' : 'text-gray-400 hover:text-white'}`}
+                  >
+                    2. Quant Signals & Execution
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* SIDE-BY-SIDE LAYOUT */}
+            {hubLayoutMode === 'SIDE_BY_SIDE' && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+                {/* Left Column: Dense Tradable Universe Radar (5 cols) */}
+                <div className="lg:col-span-5 w-full">
+                  <ContractCatalog
+                    contracts={getDynamicTradeableContracts(spotIndices)}
+                    liveQuotes={quotes}
+                    spotIndices={spotIndices}
+                    onScanSignalsForContract={(symbol, cat) => handleAiReadSignals(symbol, cat)}
+                    isScanning={isAiScanning}
+                    selectedContractSymbol={selectedContractSymbol}
+                    onSelectContract={(sym) => {
+                      setSelectedContractSymbol(sym);
+                      const dynamicSig = getOrCreateSignalForSymbol(sym, liveSignals);
+                      if (!liveSignals.some((s) => s.symbol.toUpperCase() === dynamicSig.symbol.toUpperCase())) {
+                        setLiveSignals((prev) => [dynamicSig, ...prev]);
+                      }
+                      triggerUserFeedback(`Filtered Quant Signals for: ${sym}`);
+                    }}
+                    onFetchLiveQuotes={() => handleFetchLiveQuotes(false)}
+                    isFetchingQuotes={isFetchingQuotes}
+                    onUserActionFeedback={triggerUserFeedback}
+                    isSideBySide={true}
+                  />
+                </div>
+
+                {/* Right Column: Dense Quant Signals & Execution Deck (7 cols) */}
+                <div className="lg:col-span-7 w-full">
+                  <LiveSignalsView
+                    signals={liveSignals.filter((sig) => {
+                      if (scannerFilter === 'ALPHA_PICK') return sig.funnelRank === 1;
+                      if (scannerFilter === 'TOP_3') return sig.funnelRank && sig.funnelRank <= 3;
+                      if (scannerFilter === 'TOP_12') return sig.funnelRank && sig.funnelRank <= 12;
+                      if (scannerFilter === 'NIFTY') return sig.symbol.includes('NIFTY') && !sig.symbol.includes('BANKNIFTY') && !sig.symbol.includes('FINNIFTY') && !sig.symbol.includes('MIDCPNIFTY');
+                      if (scannerFilter === 'BANKNIFTY') return sig.symbol.includes('BANKNIFTY');
+                      if (scannerFilter === 'STOCKS') return sig.category === 'EQUITY_INTRADAY' || (!sig.symbol.includes('NIFTY') && !sig.symbol.includes('SENSEX'));
+                      return true;
+                    })}
+                    selectedContractSymbol={selectedContractSymbol}
+                    onClearContractFilter={() => {
+                      setSelectedContractSymbol('');
+                      triggerUserFeedback('Cleared contract filter; showing all market signals.');
+                    }}
+                    onExecuteSignalZerodha={handleExecuteSignalOnZerodha}
+                    onExecuteSignalShadow={handleExecuteSignalShadow}
+                    onOpenModalForSignal={(sig) => {
+                      setSelectedModalSignal(sig);
+                      setIsTradeDetailsModalOpen(true);
+                      triggerUserFeedback(`Opened Full Quant Math Modal for ${sig.symbol}`);
+                    }}
+                    onAiScanSignals={() => handleAiReadSignals('ALL', 'ALL')}
+                    isAiScanning={isAiScanning}
+                    onFetchLiveQuotes={() => handleFetchLiveQuotes(false)}
+                    isFetchingQuotes={isFetchingQuotes}
+                    onUserActionFeedback={triggerUserFeedback}
+                    openPositionSymbols={positions.filter((p) => p.status === 'OPEN').map((p) => p.symbol)}
+                    recentlyExitedSymbols={recentlyExitedSymbols}
+                    onDiscardAndRefreshTrade={handleDiscardAndRefreshTrade}
+                    onViewPositionsTab={() => setActiveTab('POSITIONS_ORDERS')}
+                    isSideBySide={true}
+                    tradingMode={tradingMode}
+                    quotes={quotes}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* TABS LAYOUT */}
+            {hubLayoutMode === 'TABS' && (
+              <div className="space-y-4">
+                {hubSubTab === 'CONTRACTS' && (
+                  <ContractCatalog
+                    contracts={getDynamicTradeableContracts(spotIndices)}
+                    liveQuotes={quotes}
+                    spotIndices={spotIndices}
+                    onScanSignalsForContract={(symbol, cat) => handleAiReadSignals(symbol, cat)}
+                    isScanning={isAiScanning}
+                    selectedContractSymbol={selectedContractSymbol}
+                    onSelectContract={(sym) => {
+                      setSelectedContractSymbol(sym);
+                      const dynamicSig = getOrCreateSignalForSymbol(sym, liveSignals);
+                      if (!liveSignals.some((s) => s.symbol.toUpperCase() === dynamicSig.symbol.toUpperCase())) {
+                        setLiveSignals((prev) => [dynamicSig, ...prev]);
+                      }
+                      setHubSubTab('SIGNALS');
+                      triggerUserFeedback(`Selected ${sym} - Switched to Quant Signals`);
+                    }}
+                    onFetchLiveQuotes={() => handleFetchLiveQuotes(false)}
+                    isFetchingQuotes={isFetchingQuotes}
+                    onUserActionFeedback={triggerUserFeedback}
+                    isSideBySide={false}
+                  />
+                )}
+
+                {hubSubTab === 'SIGNALS' && (
+                  <LiveSignalsView
+                    signals={liveSignals.filter((sig) => {
+                      if (scannerFilter === 'ALPHA_PICK') return sig.funnelRank === 1;
+                      if (scannerFilter === 'TOP_3') return sig.funnelRank && sig.funnelRank <= 3;
+                      if (scannerFilter === 'TOP_12') return sig.funnelRank && sig.funnelRank <= 12;
+                      if (scannerFilter === 'NIFTY') return sig.symbol.includes('NIFTY') && !sig.symbol.includes('BANKNIFTY') && !sig.symbol.includes('FINNIFTY') && !sig.symbol.includes('MIDCPNIFTY');
+                      if (scannerFilter === 'BANKNIFTY') return sig.symbol.includes('BANKNIFTY');
+                      if (scannerFilter === 'STOCKS') return sig.category === 'EQUITY_INTRADAY' || (!sig.symbol.includes('NIFTY') && !sig.symbol.includes('SENSEX'));
+                      return true;
+                    })}
+                    selectedContractSymbol={selectedContractSymbol}
+                    onClearContractFilter={() => {
+                      setSelectedContractSymbol('');
+                      triggerUserFeedback('Cleared contract filter; showing all market signals.');
+                    }}
+                    onExecuteSignalZerodha={handleExecuteSignalOnZerodha}
+                    onExecuteSignalShadow={handleExecuteSignalShadow}
+                    onOpenModalForSignal={(sig) => {
+                      setSelectedModalSignal(sig);
+                      setIsTradeDetailsModalOpen(true);
+                      triggerUserFeedback(`Opened Full Quant Math Modal for ${sig.symbol}`);
+                    }}
+                    onAiScanSignals={() => handleAiReadSignals('ALL', 'ALL')}
+                    isAiScanning={isAiScanning}
+                    onFetchLiveQuotes={() => handleFetchLiveQuotes(false)}
+                    isFetchingQuotes={isFetchingQuotes}
+                    onUserActionFeedback={triggerUserFeedback}
+                    openPositionSymbols={positions.filter((p) => p.status === 'OPEN').map((p) => p.symbol)}
+                    recentlyExitedSymbols={recentlyExitedSymbols}
+                    onDiscardAndRefreshTrade={handleDiscardAndRefreshTrade}
+                    onViewPositionsTab={() => setActiveTab('POSITIONS_ORDERS')}
+                    isSideBySide={false}
+                    tradingMode={tradingMode}
+                    quotes={quotes}
+                  />
+                )}
+              </div>
+            )}
+
+            {/* STACKED LAYOUT */}
+            {hubLayoutMode === 'STACKED' && (
+              <div className="space-y-5">
+                <ContractCatalog
+                  contracts={getDynamicTradeableContracts(spotIndices)}
+                  liveQuotes={quotes}
+                  spotIndices={spotIndices}
+                  onScanSignalsForContract={(symbol, cat) => handleAiReadSignals(symbol, cat)}
+                  isScanning={isAiScanning}
+                  selectedContractSymbol={selectedContractSymbol}
+                  onSelectContract={(sym) => {
+                    setSelectedContractSymbol(sym);
+                    const dynamicSig = getOrCreateSignalForSymbol(sym, liveSignals);
+                    if (!liveSignals.some((s) => s.symbol.toUpperCase() === dynamicSig.symbol.toUpperCase())) {
+                      setLiveSignals((prev) => [dynamicSig, ...prev]);
+                    }
+                  }}
+                  onFetchLiveQuotes={() => handleFetchLiveQuotes(false)}
+                  isFetchingQuotes={isFetchingQuotes}
+                  onUserActionFeedback={triggerUserFeedback}
+                  isSideBySide={false}
+                />
+
+                <LiveSignalsView
+                  signals={liveSignals.filter((sig) => {
+                    if (scannerFilter === 'ALPHA_PICK') return sig.funnelRank === 1;
+                    if (scannerFilter === 'TOP_3') return sig.funnelRank && sig.funnelRank <= 3;
+                    if (scannerFilter === 'TOP_12') return sig.funnelRank && sig.funnelRank <= 12;
+                    if (scannerFilter === 'NIFTY') return sig.symbol.includes('NIFTY') && !sig.symbol.includes('BANKNIFTY') && !sig.symbol.includes('FINNIFTY') && !sig.symbol.includes('MIDCPNIFTY');
+                    if (scannerFilter === 'BANKNIFTY') return sig.symbol.includes('BANKNIFTY');
+                    if (scannerFilter === 'STOCKS') return sig.category === 'EQUITY_INTRADAY' || (!sig.symbol.includes('NIFTY') && !sig.symbol.includes('SENSEX'));
+                    return true;
+                  })}
+                  selectedContractSymbol={selectedContractSymbol}
+                  onClearContractFilter={() => {
+                    setSelectedContractSymbol('');
+                    triggerUserFeedback('Cleared contract filter; showing all market signals.');
+                  }}
+                  onExecuteSignalZerodha={handleExecuteSignalOnZerodha}
+                  onExecuteSignalShadow={handleExecuteSignalShadow}
+                  onOpenModalForSignal={(sig) => {
+                    setSelectedModalSignal(sig);
+                    setIsTradeDetailsModalOpen(true);
+                    triggerUserFeedback(`Opened Full Quant Math Modal for ${sig.symbol}`);
+                  }}
+                  onAiScanSignals={() => handleAiReadSignals('ALL', 'ALL')}
+                  isAiScanning={isAiScanning}
+                  onFetchLiveQuotes={() => handleFetchLiveQuotes(false)}
+                  isFetchingQuotes={isFetchingQuotes}
+                  onUserActionFeedback={triggerUserFeedback}
+                  openPositionSymbols={positions.filter((p) => p.status === 'OPEN').map((p) => p.symbol)}
+                  recentlyExitedSymbols={recentlyExitedSymbols}
+                  onDiscardAndRefreshTrade={handleDiscardAndRefreshTrade}
+                  onViewPositionsTab={() => setActiveTab('POSITIONS_ORDERS')}
+                  isSideBySide={false}
+                  tradingMode={tradingMode}
+                  quotes={quotes}
+                />
+              </div>
+            )}
+
+            {/* Quick Open Positions & MTM Ribbon (Clean Replacement for Full Duplicate Positions Table) */}
+            {positions.filter((p) => p.status === 'OPEN').length > 0 && (
+              <div className="bg-[#0A0B0E] border border-emerald-500/40 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+                <div className="flex items-center space-x-3">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                  <div>
+                    <span className="text-xs font-black text-white uppercase tracking-wider">
+                      {positions.filter((p) => p.status === 'OPEN').length} Active Position(s) Running on Live Desk
+                    </span>
+                    <div className="text-[11px] font-mono font-bold flex items-center space-x-2">
+                      <span className="text-gray-400">Total Unrealized MTM:</span>
+                      <span className={positions.filter((p) => p.status === 'OPEN').reduce((acc, p) => acc + (p.unrealizedPnL || 0), 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                        {positions.filter((p) => p.status === 'OPEN').reduce((acc, p) => acc + (p.unrealizedPnL || 0), 0) >= 0 ? '+' : ''}
+                        ₹{positions.filter((p) => p.status === 'OPEN').reduce((acc, p) => acc + (p.unrealizedPnL || 0), 0).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setActiveTab('POSITIONS_ORDERS');
+                    triggerUserFeedback('Navigated to Active Positions & Order Book Desk');
+                  }}
+                  className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black rounded-lg shadow uppercase tracking-wider flex items-center space-x-1.5 transition-all active:scale-95 cursor-pointer border border-emerald-400/40"
+                >
+                  <span>Open Full Positions & Orders Tab →</span>
+                </button>
+              </div>
+            )}
+          </div>
         )}
 
-        {/* GoldenGate Empirical Strategy Research & Factor Attribution Lab */}
-        {showResearchLab && (
-          <StrategyResearchLab
-            onClose={() => setShowResearchLab(false)}
-            onTriggerFeedback={triggerUserFeedback}
-          />
+        {/* ========================================================================= */}
+        {/* TAB 2: ACTIVE DESK & ORDERS */}
+        {/* ========================================================================= */}
+        {activeTab === 'POSITIONS_ORDERS' && (
+          <div className="space-y-5 animate-in fade-in duration-200">
+            {/* Step 4: Trading Performance & Realized P&L Summary */}
+            <TradingPerformanceSummary
+              positions={positions}
+              orderHistory={orderHistory}
+            />
+
+            {/* Step 5: Active Positions */}
+            <PositionsTracker
+              positions={positions}
+              orders={orderHistory}
+              quotes={quotes}
+              onExitPosition={handleExitPosition}
+              onForceRemovePosition={handleForceRemovePosition}
+              onRefreshQuotes={() => handleFetchLiveQuotes(false)}
+              isFetchingQuotes={isFetchingQuotes}
+              onSyncZerodhaPositions={handleSyncZerodhaPositionsAndOrders}
+              isSyncingZerodha={isSyncingZerodha}
+              onUpdatePositionParams={(posId, updates) => {
+                setPositions((prev) => prev.map((p) => (p.id === posId ? { ...p, ...updates } : p)));
+                triggerUserFeedback(`Updated position risk parameters.`);
+              }}
+              onClearAllPositions={() => {
+                setPositions([]);
+                localStorage.removeItem('goldengate_positions');
+                triggerUserFeedback('Cleared all local positions from tracking desk.');
+                addToast('INFO', 'Tracking Desk Cleared', 'All open positions removed from tracking desk.');
+              }}
+            />
+          </div>
         )}
 
-        {/* Step 3: AI Signals View */}
-        <LiveSignalsView
-          signals={liveSignals}
-          selectedContractSymbol={selectedContractSymbol}
-          onClearContractFilter={() => {
-            setSelectedContractSymbol('');
-            triggerUserFeedback('Cleared contract filter; showing all market signals.');
-          }}
-          onExecuteSignalZerodha={handleExecuteSignalOnZerodha}
-          onOpenModalForSignal={(sig) => {
-            setSelectedModalSignal(sig);
-            setIsTradeDetailsModalOpen(true);
-            triggerUserFeedback(`Opened Full Quant Math Modal for ${sig.symbol}`);
-          }}
-          onAiScanSignals={() => handleAiReadSignals('ALL', 'ALL')}
-          isAiScanning={isAiScanning}
-          onFetchLiveQuotes={() => handleFetchLiveQuotes(false)}
-          isFetchingQuotes={isFetchingQuotes}
-          onUserActionFeedback={triggerUserFeedback}
-          openPositionSymbols={positions.filter((p) => p.status === 'OPEN').map((p) => p.symbol)}
-          recentlyExitedSymbols={recentlyExitedSymbols}
-          onDiscardAndRefreshTrade={handleDiscardAndRefreshTrade}
-        />
+        {/* ========================================================================= */}
+        {/* TAB 3: QUANT LAB & RESEARCH (UNDER BLANKET) */}
+        {/* ========================================================================= */}
+        {activeTab === 'QUANT_LAB' && (
+          <div className="space-y-5 animate-in fade-in duration-200">
+            <div className="bg-[#111827] border border-indigo-500/40 rounded-xl p-4 flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="w-9 h-9 rounded-lg bg-indigo-600/30 border border-indigo-500/50 flex items-center justify-center text-indigo-300">
+                  <FlaskConical className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-black text-white uppercase tracking-wider flex items-center space-x-2">
+                    <span>Quant Lab & Factor Research Hub</span>
+                    <span className="text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 px-2 py-0.5 rounded-full font-bold">Under Blanket Layer</span>
+                  </h2>
+                  <p className="text-xs text-gray-400">
+                    Advanced statistical diagnostics, Greek stress testing, Monte Carlo risk engines, and historical trade matchers kept separate from live execution flow.
+                  </p>
+                </div>
+              </div>
+            </div>
 
-        {/* Step 4: Trading Performance & Realized P&L Summary */}
-        <TradingPerformanceSummary
-          positions={positions}
-          orderHistory={orderHistory}
-        />
+            {/* GoldenGate Edge Engine & Historical Matcher Dashboard */}
+            <EdgeEngineDashboard
+              selectedSymbol={selectedContractSymbol || 'NIFTY'}
+              spotIndices={spotIndices}
+              liveQuotes={quotes}
+              onSelectContract={(sym) => {
+                setSelectedContractSymbol(sym);
+                const dynamicSig = getOrCreateSignalForSymbol(sym, liveSignals);
+                if (!liveSignals.some((s) => s.symbol.toUpperCase() === dynamicSig.symbol.toUpperCase())) {
+                  setLiveSignals((prev) => [dynamicSig, ...prev]);
+                }
+              }}
+              onTriggerFeedback={triggerUserFeedback}
+            />
 
-        {/* Step 5: Active Positions */}
-        <PositionsTracker
-          positions={positions}
-          orders={orderHistory}
-          quotes={quotes}
-          onExitPosition={handleExitPosition}
-          onForceRemovePosition={handleForceRemovePosition}
-          onRefreshQuotes={() => handleFetchLiveQuotes(false)}
-          isFetchingQuotes={isFetchingQuotes}
-          onSyncZerodhaPositions={handleSyncZerodhaPositionsAndOrders}
-          isSyncingZerodha={isSyncingZerodha}
-          onUpdatePositionParams={(posId, updates) => {
-            setPositions((prev) => prev.map((p) => (p.id === posId ? { ...p, ...updates } : p)));
-            triggerUserFeedback(`Updated position risk parameters.`);
-          }}
-          onClearAllPositions={() => {
-            setPositions([]);
-            localStorage.removeItem('goldengate_positions');
-            triggerUserFeedback('Cleared all local positions from tracking desk.');
-            addToast('INFO', 'Tracking Desk Cleared', 'All open positions removed from tracking desk.');
-          }}
-        />
+            {/* GoldenGate Empirical Strategy Research & Factor Attribution Lab */}
+            <StrategyResearchLab
+              onClose={() => setActiveTab('SNIPER_HUB')}
+              onTriggerFeedback={triggerUserFeedback}
+            />
+          </div>
+        )}
 
-        {/* Step 6: Execution Logs */}
-        <ExecutionLogs logs={logs} onClearLogs={() => {
-          setLogs([]);
-          triggerUserFeedback('Execution logs cleared.');
-        }} />
+        {/* ========================================================================= */}
+        {/* TAB 4: AUDIT & JOURNAL LOGS */}
+        {/* ========================================================================= */}
+        {activeTab === 'JOURNAL_LOGS' && (
+          <div className="space-y-5 animate-in fade-in duration-200">
+            <div className="bg-[#111827] border border-teal-500/40 rounded-xl p-4 flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="w-9 h-9 rounded-lg bg-teal-600/30 border border-teal-500/50 flex items-center justify-center text-teal-300">
+                  <Brain className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-black text-white uppercase tracking-wider flex items-center space-x-2">
+                    <span>Quant Execution Audit & Memory Hub</span>
+                  </h2>
+                  <p className="text-xs text-gray-400">
+                    Real-time WebSocket event logs, Kite API order ACK traces, and closed trade learning journal.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setIsJournalModalOpen(true)}
+                className="bg-teal-600 hover:bg-teal-500 text-white font-black px-3 py-1.5 rounded-lg text-xs uppercase"
+              >
+                Open Full Memory Journal Modal
+              </button>
+            </div>
+
+            {/* Execution Logs */}
+            <ExecutionLogs
+              logs={logs}
+              onClearLogs={() => {
+                setLogs([]);
+                triggerUserFeedback('Execution logs cleared.');
+              }}
+            />
+          </div>
+        )}
 
       </main>
 
@@ -1282,6 +2085,7 @@ export default function App() {
         isOpen={isTradeDetailsModalOpen}
         onClose={() => setIsTradeDetailsModalOpen(false)}
         signal={selectedModalSignal}
+        tradingMode={tradingMode}
         onExecuteZerodhaTrade={(sig, customQty, customOrderType, customPrice, customProduct) => {
           const updatedSig: LiveTradeSignal = {
             ...sig,
@@ -1327,6 +2131,86 @@ export default function App() {
         isOpen={isEodSummaryModalOpen}
         onClose={() => setIsEodSummaryModalOpen(false)}
         journalRecords={getQuantTradeJournal()}
+      />
+
+      {/* System Help & Knowledge Modal */}
+      <HelpKnowledgeModal
+        isOpen={isHelpModalOpen}
+        onClose={() => setIsHelpModalOpen(false)}
+      />
+
+      {/* Data Files, Orders & Execution Logbook Modal */}
+      <DataFilesLogbook
+        isOpen={isDataFilesModalOpen}
+        onClose={() => setIsDataFilesModalOpen(false)}
+        activeTradingMode={tradingMode}
+        addToast={addToast}
+        liveQuotes={quotes}
+        onExecuteShadowTrade={(trade) => {
+          const testCategory: 'NIFTY_FNO' | 'BANKNIFTY_FNO' | 'FINNIFTY_FNO' | 'SENSEX_FNO' | 'EQUITY_INTRADAY' =
+            trade.symbol.includes('BANKNIFTY') ? 'BANKNIFTY_FNO' :
+            trade.symbol.includes('FINNIFTY') ? 'FINNIFTY_FNO' :
+            trade.symbol.includes('SENSEX') ? 'SENSEX_FNO' :
+            trade.symbol.includes('NIFTY') ? 'NIFTY_FNO' :
+            'EQUITY_INTRADAY';
+
+          const lotSize = trade.symbol.includes('BANKNIFTY') ? 15 : trade.symbol.includes('FINNIFTY') ? 25 : trade.symbol.includes('SENSEX') ? 10 : trade.symbol.includes('NIFTY') ? 25 : 1;
+          const entryPrice = trade.candidatePrice || 100;
+          const testSignal: LiveTradeSignal = {
+            id: `REJECT_AUDIT_${Date.now()}`,
+            symbol: trade.symbol,
+            category: testCategory,
+            assetName: trade.symbol,
+            direction: trade.candidateDirection || 'BUY',
+            timeframe: '5m',
+            entryPrice: entryPrice,
+            currentLtp: entryPrice,
+            targetPrice: +(entryPrice * 1.15).toFixed(2),
+            stopLossPrice: +(entryPrice * 0.90).toFixed(2),
+            winProbabilityPct: trade.candidateScore || 65,
+            riskRewardRatio: 1.5,
+            confidenceLevel: 'MEDIUM',
+            indicatorConfluence: [`Rejected Candidate Audit: ${trade.reason}`],
+            timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
+            dataTimestampMs: Date.now(),
+            source: 'SHADOW_SIMULATED',
+            underlyingSymbol: trade.symbol.includes('NIFTY') ? 'NIFTY' : 'EQUITY',
+            spotPriceUsed: entryPrice,
+            expectedTimeHorizon: '15 Mins (Intraday Audit)',
+            funnelRank: trade.funnelRank || 4,
+            likelihoodCalculation: {
+              winProbabilityPct: trade.candidateScore || 65,
+              monteCarloWinRatePct: trade.candidateScore || 65,
+              bayesianWinRatePct: trade.candidateScore || 65,
+              quantMemoryWinRatePct: trade.candidateScore || 65,
+              combinedCalibratedWinRatePct: trade.candidateScore || 65,
+              expectedValueINR: 250,
+              deltaGreeksScore: '+0.50 Delta',
+              sharpeRatioEstimate: 1.8,
+              rationale: `Auditing rejected trade candidate: ${trade.reason}`
+            },
+            zerodhaPayload: {
+              tradingsymbol: trade.symbol,
+              exchange: trade.symbol.includes('SENSEX') ? 'BFO' : trade.symbol.includes('NIFTY') ? 'NFO' : 'NSE',
+              transaction_type: trade.candidateDirection || 'BUY',
+              quantity: lotSize,
+              order_type: 'LIMIT',
+              product: 'MIS',
+              price: entryPrice
+            }
+          };
+          handleExecuteSignalOnZerodha(testSignal);
+          triggerUserFeedback(`Executed test shadow sandbox trade for rejected candidate: ${trade.symbol}`);
+        }}
+      />
+
+      {/* ⚠️ BLINKING YELLOW CAUTION INDICATOR IN BOTTOM RIGHT CORNER WHEN REAL LIVE TRADING IS ACTIVE */}
+      <LiveTradingCornerIndicator
+        tradingMode={tradingMode}
+        onSwitchToShadow={() => handleToggleTradingMode('SHADOW')}
+        zerodhaUser={zerodhaCreds.userLoginId}
+        isZerodhaConnected={zerodhaCreds.isConnected}
+        activePositionsCount={activePositions.length}
       />
 
       {/* 🚀 Persistent Bottom-Right Toast Notification Tray for Errors, Status Checks & Click Feedback */}

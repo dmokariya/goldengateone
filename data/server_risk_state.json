@@ -1,7 +1,7 @@
 {
   "isServerKillSwitchActive": false,
   "killSwitchReason": "Reset for testing",
-  "killSwitchUpdatedAt": "2026-08-21T02:18:14.923Z",
+  "killSwitchUpdatedAt": "2026-08-21T07:04:40.420Z",
   "dailyRealizedPnlINR": -2300,
   "dailyLossLimitPct": 2,
   "consecutiveLossCount": 4,
@@ -12,7 +12,7 @@
   "slippageTolerancePct": 1.5,
   "staleThresholdMs": 3000,
   "lastResetDateIST": "2026-08-21",
-  "lastTradeTimestamp": 1787278694924,
-  "totalOrdersPlacedToday": 11,
-  "updatedAt": "2026-08-21T02:18:14.924Z"
+  "lastTradeTimestamp": 1787295880422,
+  "totalOrdersPlacedToday": 15,
+  "updatedAt": "2026-08-21T07:04:40.422Z"
 }

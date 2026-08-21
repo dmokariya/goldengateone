@@ -809,7 +809,7 @@ export function computeOpportunityCostAnalysis(logs: ResearchSignalLog[]): {
     const selectionAlphaR = +(realizedR - alternativeR).toFixed(2);
     return {
       cycleTimestamp: log.timestamp,
-      underlying: log.underlying || log.symbol,
+      underlying: log.symbol || log.tradingsymbol,
       selectedTrade: {
         symbol: `${log.symbol} (Rank #${log.opportunityRank})`,
         score: log.goldenGateScore,

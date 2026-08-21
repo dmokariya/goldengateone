@@ -111,13 +111,13 @@ async function runAllTests() {
 
   // Test 5.1: Conflicting indicators result in NO_TRADE_EVIDENCE_CONFLICT
   const conflictingStack = evaluateEvidenceStack({
-    mtf: { status: 'CONFLICTING_DIVERGENCE', summary: 'Trends diverging', timeframes: {} as any },
-    vwap: { priceLocation: 'BELOW_VWAP', slope: 'FALLING', vwapBias: 'BEARISH', vwapValue: 24500, priceDistancePct: -0.5, summary: 'Below VWAP' },
-    adx: { adx: 14, trendStrength: 'WEAK_CHOPPY', directionalBias: 'NEUTRAL', isOptionBuyPermitted: false, plusDi: 12, minusDi: 15, summary: 'Choppy' },
+    mtf: { status: 'CONFLICTING_DIVERGENCE', alignmentScore: 25, bars: {} as any, summary: 'Trends diverging' },
+    vwap: { priceLocation: 'BELOW_VWAP', slope: 'FALLING', vwapBias: 'BEARISH', vwapValue: 24500, distancePct: -0.5, slopeBpsPerBar: -5, upperBand1: 24600, lowerBand1: 24400, upperBand2: 24700, lowerBand2: 24300, summary: 'Below VWAP' },
+    adx: { adx: 14, trendStrength: 'WEAK_CHOPPY', directionalBias: 'NEUTRAL', isOptionBuyPermitted: false, plusDI: 12, minusDI: 15, summary: 'Choppy' },
     rvol: { rvol: 0.4, volumeRegime: 'LOW_PARTICIPATION_TRAP', isInstitutionalParticipation: false, currentVolume: 1000, avgVolume20: 2500, summary: 'Low vol' },
-    structure: { structureState: 'RANGE_BOUND', breakoutDirection: 'NONE', isRetestConfirmed: false, isTrapDetected: false, keySupportLevel: 24400, keyResistanceLevel: 24600, summary: 'Range' },
-    breadth: { advanceDeclineRatio: 0.8, heavyweightsBullishCount: 2, heavyweightsBearishCount: 6, overallBreadthBias: 'MODERATE_BEARISH', summary: 'Bearish' },
-    optionChain: { pcr: 0.7, pcrRegime: 'MODERATE_BEARISH', maxPainStrike: 24500, highCallOiStrike: 24600, highPutOiStrike: 24400, callOiChange: 'LONG_BUILDUP', putOiChange: 'SHORT_BUILDUP', ivPercentile: 40, ivSanityPassed: true, bias: 'BEARISH', summary: 'Bearish' },
+    structure: { structureState: 'RANGE_BOUND', nearestSupport: 24400, nearestResistance: 24600, orb15mHigh: 24600, orb15mLow: 24400, pdh: 24650, pdl: 24350, pdc: 24500, pivotPoint: 24500, distanceToBreakoutPct: 0.8, structuralQualityScore: 30, summary: 'Range' },
+    breadth: { niftyAdvancers: 18, niftyDecliners: 32, advanceDeclineRatio: 0.56, bankNiftyBias: 'BEARISH', itSectorBias: 'BEARISH', relianceBias: 'NEUTRAL', overallBreadthBias: 'MODERATE_BEARISH', breadthScore: -40, summary: 'Bearish' },
+    optionChain: { pcr: 0.7, pcrRegime: 'MILD_BEARISH', maxPainStrike: 24500, highCallOiStrike: 24600, highPutOiStrike: 24400, callOiChange: 'LONG_BUILDUP', putOiChange: 'PUT_WRITING', ivPercentile: 40, ivSanityPassed: true, bias: 'BEARISH', summary: 'Bearish' },
     timeBucket: 'MORNING_TREND',
     intendedDirection: 'BUY',
     isOptionBuy: true

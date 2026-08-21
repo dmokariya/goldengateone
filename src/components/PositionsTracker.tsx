@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { ActivePosition, TradeOrder } from '../types';
 import { SquareOffNotificationBanner } from './SquareOffNotificationBanner';
+import { lookupLiveQuote, calculateRealtimePnL } from '../utils/quoteLookup';
 import { Briefcase, TrendingUp, TrendingDown, ArrowRightLeft, XCircle, CheckCircle2, History, RefreshCw, Clock, ShieldCheck, Zap, AlertCircle, Shield, Play } from 'lucide-react';
 
 interface PositionsTrackerProps {
   positions: ActivePosition[];
   orders: TradeOrder[];
-  quotes: Record<string, { lastPrice: number; changePct: number }>;
+  quotes: Record<string, any>;
   onExitPosition: (position: ActivePosition, customReason?: string) => void;
   onForceRemovePosition?: (position: ActivePosition) => void;
   onRefreshQuotes: () => void;
@@ -38,18 +39,18 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
   const openPositions = positions.filter((p) => p.status === 'OPEN');
   const closedPositions = positions.filter((p) => p.status === 'CLOSED');
 
-  // Calculate live portfolio stats
+  // Calculate live portfolio stats using robust quote resolution
   let totalInvestedVal = 0;
   let totalUnrealizedPnL = 0;
 
   openPositions.forEach((pos) => {
-    const livePrice = quotes[pos.symbol]?.lastPrice ?? quotes[pos.tradingsymbol]?.lastPrice ?? pos.currentPrice;
+    const q = lookupLiveQuote(pos.symbol, pos.tradingsymbol, quotes);
+    const livePrice = q?.lastPrice ?? pos.currentPrice;
     const posVal = pos.entryPrice * pos.quantity;
     totalInvestedVal += posVal;
 
-    const diff = pos.direction === 'BUY' ? livePrice - pos.entryPrice : pos.entryPrice - livePrice;
-    const pnl = diff * pos.quantity;
-    totalUnrealizedPnL += pnl;
+    const { pnlVal } = calculateRealtimePnL(pos.entryPrice, livePrice, pos.quantity, pos.direction);
+    totalUnrealizedPnL += pnlVal;
   });
 
   const totalRealizedPnL = closedPositions.reduce((acc, p) => acc + (p.unrealizedPnL || 0), 0);
@@ -301,10 +302,9 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
                 </thead>
                 <tbody className="divide-y divide-[#1F2937] text-[11px]">
                   {openPositions.map((pos) => {
-                    const currentLtp = quotes[pos.symbol]?.lastPrice ?? quotes[pos.tradingsymbol]?.lastPrice ?? pos.currentPrice;
-                    const priceDiff = pos.direction === 'BUY' ? currentLtp - pos.entryPrice : pos.entryPrice - currentLtp;
-                    const pnlVal = priceDiff * pos.quantity;
-                    const pnlPct = pos.entryPrice > 0 ? (priceDiff / pos.entryPrice) * 100 : 0;
+                    const q = lookupLiveQuote(pos.symbol, pos.tradingsymbol, quotes);
+                    const currentLtp = q?.lastPrice ?? pos.currentPrice;
+                    const { pnlVal, pnlPct } = calculateRealtimePnL(pos.entryPrice, currentLtp, pos.quantity, pos.direction);
 
                     const peakPrice = Math.max(pos.highestPriceReached || pos.entryPrice, currentLtp);
                     const trailPct = pos.trailingDistancePct ?? 5.0;
@@ -349,10 +349,19 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
 
                         {/* Current LTP & P&L */}
                         <td className="p-2.5">
-                          <div className="font-bold text-blue-400">₹{currentLtp.toFixed(2)}</div>
-                          <div className={`font-extrabold text-[10px] flex items-center space-x-1 ${pnlVal >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                            {pnlVal >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                            <span>₹{pnlVal.toFixed(2)} ({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%)</span>
+                          <div className="flex items-center space-x-1.5 font-extrabold text-blue-300">
+                            <span className="relative flex h-2 w-2">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                            </span>
+                            <span className="text-xs font-mono text-cyan-300">₹{(currentLtp > 0 ? currentLtp : pos.entryPrice).toFixed(2)}</span>
+                            <span className="text-[8.5px] px-1 py-0.2 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 font-bold animate-pulse">
+                              LIVE
+                            </span>
+                          </div>
+                          <div className={`font-extrabold text-[10px] flex items-center space-x-1 mt-0.5 ${pnlVal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {pnlVal >= 0 ? <TrendingUp className="w-3 h-3 shrink-0" /> : <TrendingDown className="w-3 h-3 shrink-0" />}
+                            <span>{pnlVal >= 0 ? '+' : ''}₹{pnlVal.toFixed(2)} ({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%)</span>
                           </div>
                         </td>
 
@@ -480,44 +489,74 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
                     <th className="p-2.5">Time</th>
                     <th className="p-2.5">Order ID</th>
                     <th className="p-2.5">Symbol</th>
-                    <th className="p-2.5">Type</th>
                     <th className="p-2.5">Side</th>
                     <th className="p-2.5">Qty</th>
-                    <th className="p-2.5">Execution Price</th>
+                    <th className="p-2.5">Entry Price</th>
+                    <th className="p-2.5">Live LTP</th>
+                    <th className="p-2.5">Live MTM P&L</th>
                     <th className="p-2.5 text-right">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#1F2937] text-[11px]">
-                  {orders.map((ord) => (
-                    <tr key={ord.id} className="hover:bg-[#1F2937]/30 transition-colors">
-                      <td className="p-2.5 text-gray-400 text-[10px]">{ord.timestamp}</td>
-                      <td className="p-2.5 text-blue-400 font-bold text-[10px]">{ord.id}</td>
-                      <td className="p-2.5 font-bold text-white">{ord.symbol}</td>
-                      <td className="p-2.5 text-gray-400 text-[10px]">{ord.type}</td>
-                      <td className="p-2.5">
-                        <span
-                          className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold ${
-                            ord.side === 'BUY' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'
-                          }`}
-                        >
-                          {ord.side}
-                        </span>
-                      </td>
-                      <td className="p-2.5 font-bold text-gray-200">{ord.quantity} Qty</td>
-                      <td className="p-2.5 text-emerald-400 font-bold">₹{ord.price.toFixed(2)}</td>
-                      <td className="p-2.5 text-right">
-                        <span
-                          className={`px-2 py-0.5 rounded text-[9.5px] font-bold ${
-                            ord.status === 'FILLED'
-                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                              : 'bg-red-500/20 text-red-400 border border-red-500/30'
-                          }`}
-                        >
-                          {ord.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {orders.map((ord) => {
+                    const q = lookupLiveQuote(ord.symbol, ord.tradingsymbol, quotes);
+                    const ltp = q?.lastPrice ?? ord.currentLtp ?? ord.price;
+                    const { pnlVal, pnlPct } = calculateRealtimePnL(ord.price, ltp, ord.quantity, ord.side);
+
+                    return (
+                      <tr key={ord.id} className="hover:bg-[#1F2937]/30 transition-colors">
+                        <td className="p-2.5 text-gray-400 text-[10px]">{ord.timestamp}</td>
+                        <td className="p-2.5 text-[10px]">
+                          <div className="text-blue-400 font-bold font-mono">{ord.id}</div>
+                          <div className="text-[9px] text-gray-500 font-mono">Ref: TRD_{ord.id.replace(/^(ORD_|SHD_)/, '')}</div>
+                        </td>
+                        <td className="p-2.5 font-bold text-white">
+                          <div>{ord.symbol}</div>
+                          {ord.mode && (
+                            <span className={`text-[8.5px] px-1 py-0.2 rounded font-black ${ord.mode === 'SHADOW' ? 'bg-blue-900/60 text-blue-300' : 'bg-emerald-900/60 text-emerald-300'}`}>
+                              {ord.mode}
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-2.5">
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold ${
+                              ord.side === 'BUY' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'
+                            }`}
+                          >
+                            {ord.side}
+                          </span>
+                        </td>
+                        <td className="p-2.5 font-bold text-gray-200">{ord.quantity} Qty</td>
+                        <td className="p-2.5 text-gray-300 font-bold">₹{ord.price.toFixed(2)}</td>
+                        <td className="p-2.5 text-blue-300 font-bold font-mono">
+                          <div className="flex items-center space-x-1">
+                            <span className="relative flex h-1.5 w-1.5">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-500"></span>
+                            </span>
+                            <span>{ltp > 0 ? `₹${ltp.toFixed(2)}` : `₹${ord.price.toFixed(2)}`}</span>
+                          </div>
+                        </td>
+                        <td className="p-2.5 font-mono">
+                          <span className={`font-black ${pnlVal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {pnlVal >= 0 ? '+' : ''}₹{pnlVal.toFixed(2)} ({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%)
+                          </span>
+                        </td>
+                        <td className="p-2.5 text-right">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[9.5px] font-bold ${
+                              ord.status === 'FILLED'
+                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                : 'bg-red-500/20 text-red-400 border border-red-500/30'
+                            }`}
+                          >
+                            {ord.status}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

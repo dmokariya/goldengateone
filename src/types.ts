@@ -1,7 +1,8 @@
 export type DataFeedStatus = 'LIVE' | 'STALE' | 'UNAVAILABLE' | 'DISCONNECTED';
-export type SignalProvenanceSource = 'ZERODHA_KITE_LIVE' | 'INSUFFICIENT_DATA';
+export type SignalProvenanceSource = 'ZERODHA_KITE_LIVE' | 'SHADOW_SIMULATED' | 'INSUFFICIENT_DATA';
 
-export type ExecutionMode = 'HFT_SIM' | 'ZERODHA_KITE' | 'BACKTEST';
+export type ExecutionMode = 'HFT_SIM' | 'ZERODHA_KITE' | 'BACKTEST' | 'PAPER_SHADOW';
+export type TradingMode = 'SHADOW' | 'LIVE';
 
 export interface OrderDepthItem {
   price: number;
@@ -52,6 +53,7 @@ export interface AlphaModelSignal {
 export interface TradeOrder {
   id: string;
   symbol: string;
+  tradingsymbol?: string;
   side: 'BUY' | 'SELL';
   type: 'MARKET' | 'LIMIT' | 'SL_MARKET';
   price: number;
@@ -61,6 +63,11 @@ export interface TradeOrder {
   timestamp: string;
   latencyMs: number;
   pnl?: number;
+  currentLtp?: number;
+  unrealizedPnL?: number;
+  unrealizedPnLPct?: number;
+  mode?: TradingMode; // 'SHADOW' | 'LIVE'
+  isPaper?: boolean;
   isSliced?: boolean;
   sliceCount?: number;
   childOrderIds?: string[];
@@ -139,6 +146,8 @@ export interface RealizedEvidenceLog {
   id: string;
   symbol: string;
   direction: 'BUY' | 'SELL';
+  mode?: TradingMode; // 'SHADOW' | 'LIVE'
+  isPaper?: boolean;
   goldenGateScore: number;
   evidencePillarsCount: number;
   entryLtp: number;
@@ -391,11 +400,56 @@ export interface LikelihoodCalculation {
   quantitativeBasis?: string[];
 }
 
+export interface PriceActionEvidence {
+  breakoutLevel: number;
+  breakoutDescription: string;
+  invalidationLevel: number;
+  invalidationDescription: string;
+  rvol: number; // Relative Volume e.g. 2.4x
+  volumeDescription: string;
+  marketSupport: string;
+  trend15m: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  setup5m: 'CLEAN_BREAKOUT' | 'PULLBACK_RETEST' | 'VWAP_EXPANSION' | 'CONSOLIDATION';
+}
+
+export interface FunnelCandidate {
+  symbol: string;
+  displayName: string;
+  category: AssetCategory;
+  instrumentType: 'STOCK_OPTION' | 'INDEX_OPTION' | 'EQUITY_INTRADAY';
+  spotPrice: number;
+  selectedOptionStrike?: number;
+  selectedOptionType?: 'CE' | 'PE';
+  optionSymbol?: string;
+  optionPrice?: number;
+  delta?: number;
+  moneyness?: string;
+  lotSize: number;
+  rvol: number;
+  trend15m: 'UP' | 'DOWN' | 'FLAT';
+  setup5m: string;
+  priceAction: PriceActionEvidence;
+  goldenGateScore: number;
+  winProbabilityPct: number;
+  expectedValueINR: number;
+  funnelStage: 1 | 2 | 3 | 4; // 1: Scanned (100), 2: Interesting (12), 3: Strong (3), 4: Best Alpha Pick (1)
+  rank: number;
+  statusTag: 'BEST_ALPHA_PICK' | 'STRONG_CANDIDATE' | 'INTERESTING_WATCH' | 'FILTERED_OUT';
+  whyBestPlaceToRiskMoney: string;
+}
+
 export interface LiveTradeSignal {
   id: string;
   symbol: string;
   category: AssetCategory;
   assetName: string; // e.g. "NIFTY 24650 CE" or "RELIANCE"
+  instrumentTypeTag?: 'STOCK_OPTION' | 'INDEX_OPTION' | 'EQUITY_INTRADAY';
+  identificationMarker?: string; // e.g. "[STOCK OPTION: RELIANCE 2950 CE | ITM 1 | Delta: +0.68]"
+  capitalRequiredINR?: number;
+  maxRiskINR?: number;
+  priceAction?: PriceActionEvidence;
+  funnelRank?: number;
+  isBestTradeAlphaPick?: boolean;
   direction: 'BUY' | 'SELL';
   timeframe: '1m' | '5m';
   entryPrice: number;
@@ -500,6 +554,8 @@ export interface ActivePosition {
   timestamp: string;
   openedAtMs?: number;
   status: 'OPEN' | 'CLOSED';
+  mode?: TradingMode; // 'SHADOW' | 'LIVE'
+  isPaper?: boolean;
   expectedTimeHorizon?: string;
   winProbabilityPct?: number;
   timeStopRule?: string;
@@ -1145,7 +1201,7 @@ export interface FactorInteractionItem {
   standaloneSumExpectancy: number;
   synergisticCombinedExpectancy: number;
   synergyDeltaR: number;
-  verdict: 'STRONG_POSITIVE_SYNERGY' | 'MODERATE_SYNERGY' | 'REDUNDANT' | 'NEGATIVE_INTERACTION';
+  verdict: 'STRONG_POSITIVE_SYNERGY' | 'MODERATE_SYNERGY' | 'REDUNDANT' | 'NEGATIVE_INTERACTION' | 'INSUFFICIENT_DATA';
 }
 
 export interface OpportunityCostRecord {

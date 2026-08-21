@@ -10,6 +10,7 @@ interface TradeDetailsModalProps {
   isOpen: boolean;
   onClose: () => void;
   signal: LiveTradeSignal | null;
+  tradingMode?: 'LIVE' | 'SHADOW';
   onExecuteZerodhaTrade: (
     signal: LiveTradeSignal,
     customQty: number,
@@ -23,6 +24,7 @@ export const TradeDetailsModal: React.FC<TradeDetailsModalProps> = ({
   isOpen,
   onClose,
   signal,
+  tradingMode = 'SHADOW',
   onExecuteZerodhaTrade
 }) => {
   if (!isOpen || !signal) return null;
@@ -101,7 +103,9 @@ export const TradeDetailsModal: React.FC<TradeDetailsModalProps> = ({
         
         {/* Top Accent Stripe */}
         <div className={`h-1.5 w-full ${
-          signal.isMustTakeTrade || signal.winProbabilityPct >= 95
+          tradingMode === 'LIVE'
+            ? 'bg-rose-600 animate-pulse'
+            : signal.isMustTakeTrade || signal.winProbabilityPct >= 95
             ? 'bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 animate-pulse'
             : isEquity
             ? 'bg-blue-500'
@@ -109,6 +113,24 @@ export const TradeDetailsModal: React.FC<TradeDetailsModalProps> = ({
             ? 'bg-rose-500'
             : 'bg-emerald-500'
         }`} />
+
+        {/* PROMINENT LIVE REAL MONEY TRADING CAUTION BANNER */}
+        {tradingMode === 'LIVE' && (
+          <div className="bg-gradient-to-r from-red-950 via-rose-900 to-red-950 border-b border-rose-500/80 px-4 py-2 flex items-center justify-between text-white animate-pulse">
+            <div className="flex items-center space-x-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-400 animate-ping shrink-0" />
+              <span className="font-black text-rose-200 uppercase tracking-wider text-[11px]">
+                ⚠️ CAUTION: LIVE REAL MONEY ORDER
+              </span>
+              <span className="text-[11px] text-rose-100 hidden sm:inline">
+                • Executing this will place a REAL order on your Zerodha account with REAL FUNDS.
+              </span>
+            </div>
+            <span className="text-[10px] font-mono bg-rose-950 px-2 py-0.5 rounded border border-rose-500/60 font-black text-white uppercase">
+              REAL CAPITAL
+            </span>
+          </div>
+        )}
 
         {/* Modal Header */}
         <div className="bg-[#161B22] p-4 border-b border-gray-800 flex items-center justify-between">
@@ -333,10 +355,20 @@ export const TradeDetailsModal: React.FC<TradeDetailsModalProps> = ({
                   </button>
                   <input
                     type="number"
-                    value={quantity}
+                    value={quantity || ''}
                     onChange={(e) => {
-                      const val = parseInt(e.target.value, 10);
-                      if (!isNaN(val) && val > 0) setQuantity(val);
+                      const raw = e.target.value;
+                      if (raw === '') {
+                        setQuantity(0);
+                        return;
+                      }
+                      const val = parseInt(raw, 10);
+                      if (!isNaN(val) && val >= 0) setQuantity(val);
+                    }}
+                    onBlur={() => {
+                      if (!quantity || quantity <= 0) {
+                        setQuantity(isEquity ? 5 : lotSize);
+                      }
                     }}
                     className="flex-1 text-center font-black text-white text-xs bg-transparent focus:outline-none"
                   />
@@ -458,7 +490,9 @@ export const TradeDetailsModal: React.FC<TradeDetailsModalProps> = ({
               onClose();
             }}
             className={`flex-1 py-3 rounded font-black uppercase tracking-wider text-xs shadow-xl flex items-center justify-center space-x-2 transition-all ${
-              signal.isMustTakeTrade || signal.winProbabilityPct >= 95
+              tradingMode === 'LIVE'
+                ? 'bg-gradient-to-r from-red-600 via-rose-600 to-red-700 hover:from-red-500 hover:to-rose-500 text-white border-2 border-rose-400 ring-2 ring-rose-500/50 animate-pulse'
+                : signal.isMustTakeTrade || signal.winProbabilityPct >= 95
                 ? 'bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 hover:from-amber-400 hover:to-yellow-300 text-black border border-amber-300 ring-2 ring-amber-400/40'
                 : isBuy
                 ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white border border-emerald-400/30'
@@ -466,7 +500,9 @@ export const TradeDetailsModal: React.FC<TradeDetailsModalProps> = ({
             }`}
           >
             <Zap className="w-4 h-4 text-white shrink-0" />
-            <span>EXECUTE ZERODHA TRADE ({quantity} QTY @ ₹{price.toFixed(2)})</span>
+            <span>
+              {tradingMode === 'LIVE' ? '🔴 EXECUTE REAL LIVE ORDER' : '🟢 EXECUTE SANDBOX ORDER'} ({quantity} QTY @ ₹{price.toFixed(2)})
+            </span>
             <ChevronRight className="w-4 h-4 text-white shrink-0" />
           </button>
         </div>

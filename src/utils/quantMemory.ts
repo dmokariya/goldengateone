@@ -2,6 +2,7 @@ import { ActivePosition, LiveTradeSignal } from '../types';
 
 export interface QuantTradeRecord {
   id: string;
+  tradingMode?: 'SHADOW' | 'LIVE';
   symbol: string;
   category: string;
   direction: 'BUY' | 'SELL';
@@ -71,8 +72,11 @@ export function recordClosedTradeToJournal(pos: ActivePosition, exitReason: stri
     lesson = `🔴 Loss incurred (${realizedPnLPct.toFixed(2)}%). Market reversed against directional momentum.`;
   }
 
+  const mode = (pos.mode || (pos.isPaper ? 'SHADOW' : 'LIVE')) as 'SHADOW' | 'LIVE';
+
   const newRecord: QuantTradeRecord = {
     id: `journal-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    tradingMode: mode,
     symbol: pos.symbol,
     category: pos.symbol.includes('CE') || pos.symbol.includes('PE') ? 'NIFTY_FNO' : 'EQUITY_INTRADAY',
     direction: pos.direction,
@@ -93,6 +97,12 @@ export function recordClosedTradeToJournal(pos: ActivePosition, exitReason: stri
   const updatedJournal = [newRecord, ...currentJournal];
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedJournal));
+    // Persist to server data file asynchronously
+    fetch('/api/data-files/record-journal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newRecord)
+    }).catch(err => console.warn('Failed to sync journal to server file:', err));
   } catch (e) {
     console.error('Error saving quant trade journal:', e);
   }
