@@ -930,5 +930,233 @@ export interface SetupMatrixRow {
   status: 'HIGH_EDGE_APPROVED' | 'MODERATE_EDGE' | 'DESTRUCTIVE_BLACKLISTED';
 }
 
+// -------------------------------------------------------------------------------------------------
+// STRATEGY RESEARCH LAYER TYPES & INTERFACES (Empirical Research & Champion-vs-Challenger)
+// -------------------------------------------------------------------------------------------------
+
+export type EvidenceProvenance = 'LIVE' | 'PAPER' | 'SHADOW' | 'HISTORICAL' | 'BACKTEST';
+
+export interface ResearchSignalFactorStates {
+  vwapAligned: boolean;
+  adxValue: number;
+  adxStrong: boolean;
+  rvolValue: number;
+  rvolSurge: boolean;
+  mtfAligned: boolean;
+  mtfScore: number;
+  breadthScore: number;
+  breadthSupportive: boolean;
+  trendPersistenceHurst: number;
+  trendPersistent: boolean;
+  trapRadarClear: boolean;
+  spreadAcceptable: boolean;
+  spreadPct: number;
+  deltaAcceptable: boolean;
+  deltaValue: number;
+  thetaDecaySafe: boolean;
+  thetaDecayPctPerDay: number;
+  liquidityPass: boolean;
+  ivPercentile: number;
+}
+
+export interface ResearchMaeMfeData {
+  mfePrice: number;
+  mfePct: number;
+  mfeR: number;
+  timeToMfeMins: number;
+  maePrice: number;
+  maePct: number;
+  maeR: number;
+  timeToMaeMins: number;
+  exitPrice: number;
+  exitOutcome: 'TARGET_HIT' | 'SL_HIT' | 'TRAILING_STOP' | 'EOD_EXIT';
+  realizedR: number;
+  hypotheticalR: number; // For rejected shadow trades
+  grossPnLINR: number;
+  netPnLINR: number;
+}
+
+export interface ResearchSignalLog {
+  id: string;
+  timestamp: string;
+  timestampMs: number;
+  symbol: string;
+  tradingsymbol: string;
+  category: AssetCategory;
+  optionType?: 'CE' | 'PE' | 'EQ';
+  strike?: number;
+  expiry?: string;
+  regime: MarketRegimeArchetype;
+  timeOfDay: TimeOfDayBucket;
+  spotPrice: number;
+  ltp: number;
+  bid: number;
+  ask: number;
+  spreadPct: number;
+  volume: number;
+  oi: number;
+  ivPct: number;
+  greeks: { delta: number; theta: number; gamma: number; vega: number };
+  goldenGateScore: number;
+  factorStates: ResearchSignalFactorStates;
+  proposedEntry: number;
+  proposedSL: number;
+  proposedTarget1: number;
+  proposedTarget2: number;
+  riskPerLotINR: number;
+  expectedCostsINR: number;
+  decision: 'ACCEPTED' | 'REJECTED';
+  rejectionReason?: string;
+  filterTriggered?: string;
+  opportunityRank: number;
+  isTopDecile: boolean;
+  maeMfe: ResearchMaeMfeData;
+  provenance: EvidenceProvenance;
+}
+
+export interface FactorAttributionMetrics {
+  factorKey: string;
+  factorName: string;
+  description: string;
+  activeN: number;
+  activeWinRate: number;
+  activeAvgR: number;
+  activeNetExpectancy: number;
+  activeProfitFactor: number;
+  activeMaxDrawdown: number;
+  inactiveN: number;
+  inactiveWinRate: number;
+  inactiveAvgR: number;
+  inactiveNetExpectancy: number;
+  incrementalExpectancy: number; // Delta E(R)
+  informationCoefficient: number;
+  confidenceInterval: [number, number]; // 95% Bootstrap CI
+  sampleSizeAdequate: boolean; // N >= 30
+  verdict: 'HIGH_EDGE' | 'MODERATE_EDGE' | 'NEUTRAL' | 'HARMFUL';
+}
+
+export interface CounterfactualFilterAnalysis {
+  filterKey: string;
+  filterName: string;
+  rejectedCount: number;
+  savedLossesCount: number;
+  savedLossesR: number; // e.g. +18.4R saved from bad trades
+  missedWinnersCount: number;
+  missedProfitR: number; // e.g. -4.2R missed from good trades
+  netFilterValueR: number; // savedLossesR - missedProfitR
+  netSavedLossesINR: number;
+  efficiencyRatio: number; // saved / (saved + missed)
+  verdict: 'ESSENTIAL' | 'NEUTRAL_REDUNDANT' | 'HARMFUL_OVERRESTRICTIVE';
+  actionRecommendation: string;
+}
+
+export interface ParameterStabilityCurve {
+  parameterKey: string;
+  parameterName: string;
+  description: string;
+  testedValues: number[];
+  sweepResults: {
+    value: number;
+    sampleSize: number;
+    winRate: number;
+    netExpectancyR: number;
+    sharpeEstimate: number;
+    maxDrawdownPct: number;
+    isStablePlateau: boolean;
+    isIsolatedSpike: boolean;
+  }[];
+  optimalPlateauRange: [number, number];
+  currentProductionValue: number;
+  overfittingRisk: 'LOW' | 'MODERATE' | 'HIGH';
+  plateauStabilityScore: number; // 0 - 100
+}
+
+export interface ExitResearchAnalysis {
+  currentStopLossATR: number;
+  currentPartialTargetR: number;
+  currentRunnerTargetR: number;
+  winnersMaeDistribution: { bucket: string; frequencyPct: number; cumulativePct: number }[];
+  losersMfeDistribution: { bucket: string; frequencyPct: number; cumulativePct: number }[];
+  winnerMae90thPercentileR: number;
+  loserMfeMaxReversionR: number;
+  recommendedSLMultiplier: number;
+  recommendedPartialTargetR: number;
+  estimatedExpectancyGainPct: number;
+  scientificRationale: string;
+}
+
+export interface ChampionChallengerModel {
+  id: string;
+  name: string;
+  role: 'CHAMPION' | 'CHALLENGER';
+  tagline: string;
+  description: string;
+  factorWeights: Record<string, number>;
+  thresholdOverrides: Record<string, number>;
+  exitRules: {
+    stopLossAtrMultiplier: number;
+    partialScaleOutR: number;
+    partialScaleOutPct: number;
+    trailingStopAtrMultiplier: number;
+    breakevenTriggerR: number;
+  };
+  metrics: {
+    sampleSizeN: number;
+    winRatePct: number;
+    grossExpectancyR: number;
+    netExpectancyR: number;
+    netProfitINR: number;
+    profitFactor: number;
+    maxDrawdownPct: number;
+    sharpeRatio: number;
+    walkForwardEfficiencyPct: number;
+    inSampleExpectancyR: number;
+    outOfSampleExpectancyR: number;
+    forwardShadowExpectancyR: number;
+  };
+  equityCurve: { timestamp: string; inSample: number; outOfSample: number; forwardShadow: number }[];
+  promotionChecklist: {
+    minSampleSizePassed: boolean;
+    positiveNetExpectancyPassed: boolean;
+    walkForwardPassed: boolean;
+    drawdownAcceptable: boolean;
+    statisticallySignificantOutperformance: boolean;
+    forwardShadowValidated: boolean;
+    overallPromotable: boolean;
+  };
+  provenance: 'CHAMPION_PROD' | 'SHADOW_CHALLENGER';
+}
+
+export interface RegimeAttributionMatrix {
+  regimeKey: string;
+  regimeLabel: string;
+  sampleSize: number;
+  winRate: number;
+  netExpectancyR: number;
+  topPerformingFactors: string[];
+  harmfulFactors: string[];
+  recommendedStrategy: string;
+}
+
+export interface FactorInteractionItem {
+  factorCombination: string[];
+  combinationLabel: string;
+  sampleSize: number;
+  standaloneSumExpectancy: number;
+  synergisticCombinedExpectancy: number;
+  synergyDeltaR: number;
+  verdict: 'STRONG_POSITIVE_SYNERGY' | 'MODERATE_SYNERGY' | 'REDUNDANT' | 'NEGATIVE_INTERACTION';
+}
+
+export interface OpportunityCostRecord {
+  cycleTimestamp: string;
+  underlying: string;
+  selectedTrade: { symbol: string; score: number; realizedR: number; netPnLINR: number };
+  bestAlternativeTrade: { symbol: string; score: number; hypotheticalR: number; hypotheticalPnLINR: number };
+  selectionAlphaR: number;
+  topDecileAlphaValid: boolean;
+}
+
+
 
 

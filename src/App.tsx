@@ -26,8 +26,9 @@ import { LiveTickerBar } from './components/LiveTickerBar';
 import { TradingPerformanceSummary } from './components/TradingPerformanceSummary';
 import { ToastContainer, ToastNotification } from './components/ToastContainer';
 import { EdgeEngineDashboard } from './components/EdgeEngineDashboard';
+import { StrategyResearchLab } from './components/StrategyResearchLab';
 import { getDynamicTradeableContracts, DEFAULT_UNDERLYING_SPOTS } from './data/contracts';
-import { Zap, Brain, Layers, AlertOctagon, RefreshCw, Home, ShieldAlert, CheckCircle2, ShieldCheck, Sparkles, Scale } from 'lucide-react';
+import { Zap, Brain, Layers, AlertOctagon, RefreshCw, Home, ShieldAlert, CheckCircle2, ShieldCheck, Sparkles, Scale, FlaskConical } from 'lucide-react';
 
 export default function App() {
   // Zerodha API Credentials State
@@ -119,6 +120,7 @@ export default function App() {
   const [isEmergencyStopOpen, setIsEmergencyStopOpen] = useState<boolean>(false);
   const [autoTradingCapital, setAutoTradingCapital] = useState<number>(100000); // ₹1,00,000 Allocation
   const [showEdgeEngine, setShowEdgeEngine] = useState<boolean>(true);
+  const [showResearchLab, setShowResearchLab] = useState<boolean>(true);
 
   // Positions and Order History State (with Local Storage Persistence)
   const [positions, setPositions] = useState<ActivePosition[]>(() => {
@@ -1014,6 +1016,26 @@ export default function App() {
             <span className="sm:hidden">⚡ EDGE</span>
           </button>
 
+          {/* GoldenGate Empirical Strategy Research Layer Button */}
+          <button
+            onClick={() => {
+              setShowResearchLab((prev) => {
+                const nextState = !prev;
+                triggerUserFeedback(nextState ? 'Opened GoldenGate Strategy Research & Factor Attribution Lab.' : 'Minimized Strategy Research Lab.');
+                return nextState;
+              });
+            }}
+            className={`flex items-center space-x-1.5 font-black px-3 py-1.5 rounded text-[10.5px] sm:text-[11px] shadow border transition-all uppercase tracking-wider active:scale-95 ${
+              showResearchLab
+                ? 'bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white border-indigo-300 ring-1 ring-indigo-400/40'
+                : 'bg-gray-800 hover:bg-gray-700 text-gray-200 border-gray-600'
+            }`}
+          >
+            <FlaskConical className="w-3.5 h-3.5 text-pink-300" />
+            <span className="hidden sm:inline">🔬 STRATEGY RESEARCH LAB</span>
+            <span className="sm:hidden">🔬 RESEARCH</span>
+          </button>
+
           {/* Quant Memory & Journal Modal Button */}
           <button
             onClick={() => {
@@ -1139,6 +1161,14 @@ export default function App() {
                 setLiveSignals((prev) => [dynamicSig, ...prev]);
               }
             }}
+            onTriggerFeedback={triggerUserFeedback}
+          />
+        )}
+
+        {/* GoldenGate Empirical Strategy Research & Factor Attribution Lab */}
+        {showResearchLab && (
+          <StrategyResearchLab
+            onClose={() => setShowResearchLab(false)}
             onTriggerFeedback={triggerUserFeedback}
           />
         )}
