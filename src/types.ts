@@ -183,14 +183,136 @@ export type RejectionCode =
   | 'STALE_DATA'
   | 'EXCESSIVE_SPREAD'
   | 'INSUFFICIENT_MARKET_DEPTH'
+  | 'LOW_OI_VOLUME_LIQUIDITY'
   | 'PRICE_SLIPPED'
   | 'DAILY_LOSS_LIMIT_BREACHED'
   | 'CONSECUTIVE_LOSSES_COOLDOWN'
   | 'MAX_PORTFOLIO_CORRELATION'
   | 'UNRESOLVED_INSTRUMENT'
   | 'MARKET_SESSION_CLOSED'
+  | 'OPENING_VOLATILITY_FILTER'
+  | 'EOD_ENTRY_CUTOFF'
+  | 'HOLIDAY_CLOSED'
+  | 'IV_INFLATION_SANITY'
+  | 'MAX_PREMIUM_AT_RISK_EXCEEDED'
+  | 'REENTRY_COOLDOWN_ACTIVE'
+  | 'DUPLICATE_SIGNAL_IDEMPOTENT'
   | 'SERVER_KILL_SWITCH_ACTIVE'
   | 'CHOPPY_REGIME_OPTION_BUY_BLOCKED';
+
+export type TimeOfDayBucket =
+  | 'PRE_OPEN'
+  | 'OPENING_DISCOVERY' // 09:15 - 09:25 IST
+  | 'MORNING_TREND' // 09:25 - 10:45 IST
+  | 'MIDDAY_CHOP' // 10:45 - 13:30 IST
+  | 'AFTERNOON_MOMENTUM' // 13:30 - 14:45 IST
+  | 'CLOSING_EOD' // 14:45 - 15:30 IST
+  | 'MARKET_CLOSED';
+
+export type DteRegime =
+  | 'GT_5_DTE' // > 5 Days to Expiry (Low theta decay)
+  | '2_TO_5_DTE' // 2-5 Days to Expiry (Standard swing/intraday)
+  | '1_DTE' // 1 Day to Expiry (Elevated theta decay)
+  | 'EXPIRY_DAY' // Expiry Day (High gamma, violent decay)
+  | 'EXPIRY_FINAL_90MIN'; // Final 90 mins of Expiry (Extreme zero-hero risk)
+
+export interface IndianHoliday {
+  date: string; // YYYY-MM-DD
+  name: string;
+  exchange: 'NSE' | 'BSE' | 'ALL';
+  isTradingHoliday: boolean;
+}
+
+export interface MarketCalendarStatus {
+  isOpen: boolean;
+  state: MarketSessionState;
+  timeOfDayBucket: TimeOfDayBucket;
+  isHoliday: boolean;
+  holidayName?: string;
+  isOpeningFilterActive: boolean; // 09:15 - 09:25
+  isEodCutoffActive: boolean; // 14:45+ (no new entries)
+  istTimeFormatted: string;
+  currentDateIST: string;
+  reason: string;
+}
+
+export interface PortfolioGreeks {
+  netDelta: number; // e.g. +1.45 (Net directional bias)
+  netGamma: number; // e.g. +0.012
+  netThetaINR: number; // e.g. -2450.00 ₹/day
+  netVegaINR: number; // e.g. +380.00 ₹/1% IV change
+  directionalBias: 'BULLISH' | 'BEARISH' | 'DELTA_NEUTRAL';
+  openPositionsCount: number;
+  totalExposureINR: number;
+  totalPremiumAtRiskINR: number;
+  updatedAt: string;
+}
+
+export interface StrikeSelectionResult {
+  underlyingSymbol: string;
+  spotPrice: number;
+  atmStrike: number;
+  stepSize: number;
+  selectedStrike: number;
+  optionType: 'CE' | 'PE';
+  moneyness: 'ITM' | 'ATM' | 'OTM';
+  dte: number;
+  dteRegime: DteRegime;
+  expiryDateStr: string;
+  suggestedTradingsymbol: string;
+}
+
+export interface SignalPerformanceRecord {
+  id: string; // Unique signal ID / idempotency key
+  timestamp: string; // ISO / IST string
+  timestampMs: number;
+  underlying: string; // e.g. "NIFTY"
+  symbol: string; // e.g. "NIFTY26AUG24650CE"
+  strike: number;
+  optionType: 'CE' | 'PE' | 'EQ';
+  direction: 'BUY' | 'SELL';
+  dte: number;
+  dteRegime: DteRegime;
+  timeOfDayBucket: TimeOfDayBucket;
+  marketRegime: string;
+  spotPriceAtSignal: number;
+  entryPrice: number;
+  stopLossPrice: number;
+  targetPrice: number;
+  riskRewardRatio: number;
+  winProbabilityPct: number;
+  goldenGateScore: number;
+  attribution: StrategyAttribution;
+  spreadPct: number;
+  ivPct: number;
+  delta: number;
+  gamma: number;
+  theta: number;
+  vega: number;
+  volume: number;
+  openInterest: number;
+  depthAbsorptionRatio?: number;
+  marketBreadth?: string;
+  sectorConfirmation?: string;
+  preTradeStatus: 'APPROVED' | 'REJECTED';
+  rejectionCode?: RejectionCode;
+  rejectionReason?: string;
+  isPaperTrade: boolean;
+  orderId?: string;
+  status: 'PENDING' | 'ACTIVE' | 'TARGET_HIT' | 'SL_HIT' | 'TIME_EXIT' | 'CANCELLED';
+  currentPrice?: number;
+  mfe: number; // Maximum Favourable Excursion (₹ price distance)
+  mae: number; // Maximum Adverse Excursion (₹ price distance)
+  mfePct: number; // Peak profit %
+  maePct: number; // Peak drawdown %
+  finalPnlINR?: number;
+  finalReturnPct?: number;
+  exitPrice?: number;
+  exitTimestamp?: string;
+  timeToExitMins?: number;
+  timeToTargetOrSlMins?: number;
+  notes?: string;
+}
 
 export interface PreTradeValidationResult {
   approved: boolean;

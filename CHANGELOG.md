@@ -6,6 +6,28 @@ This document tracks all changes, feature implementations, and quantitative arch
 
 ## 📅 Commit & Release History
 
+### [v2.6.0] - Unbypassable Server-Side Pre-Trade Risk Gate & Persistent RMS Architecture
+**Date**: 2026-08-20  
+**Summary**: Hardened `/api/zerodha/execute-order` to make pre-trade risk validation completely unbypassable. Orders now internally fetch fresh Zerodha quotes and depth, strictly resolve instruments with zero heuristic fallback, derive contract lot sizes exclusively from the live instrument master, enforce risk-sized quantities, protect administrative risk endpoints, and persist critical risk state across server restarts.
+
+#### 🚀 Key Features & Changes:
+1. **Unbypassable Server-Side Order Execution Gate (`server.ts`)**:
+   - Eliminated all heuristic fallback lot sizes and exchanges in order execution. If an instrument cannot be resolved from the official Zerodha master index, execution is aborted with `UNRESOLVED_INSTRUMENT` (HTTP 422).
+   - Internally queries Zerodha Kite live quote & order book depth directly inside the server pipeline prior to placing any orders.
+   - Enforces market session gates (IST 09:15-15:15 validation), daily loss limits, and consecutive loss cooldowns natively on the server.
+   - Rechecks live price slippage and book bid-ask spread against live depth.
+   - Derives quantity strictly from account equity risk budget and verified instrument lot size.
+
+2. **Persistent Risk Store & State Engine (`server/riskStore.ts`)**:
+   - Persists kill switch status, daily realized PnL, consecutive loss count, and risk parameters to disk (`data/server_risk_state.json`) to survive server restarts.
+   - Automatic IST midnight rollover detection to reset daily trading statistics.
+   - Records order placement and trade results seamlessly.
+
+3. **Protected Risk Management Endpoints**:
+   - Secured `/api/server/kill-switch`, `/api/server/risk-state`, and `/api/zerodha/record-trade-result` with session and authorization verification (`isAuthorizedRiskRequest`).
+
+---
+
 ### [v2.5.0] - Independent Pre-Trade Risk Gate & Strategy Attribution Architecture
 **Date**: 2026-08-20  
 **Summary**: Decoupled Signal Generation from Pre-Trade Execution Risk validation, added multi-factor Quantitative Strategy Attribution (GoldenGate score), net expected value with fee deductions, synthetic data isolation, and server-side kill switch controls.

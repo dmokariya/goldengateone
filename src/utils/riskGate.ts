@@ -1,93 +1,19 @@
 // src/utils/riskGate.ts
 // Independent Pre-Trade Risk & Execution Gate Engine
-// Strictly enforces separation between Signal Generation and Risk/Execution
+// Strictly enforces institutional separation between Signal Generation and Risk/Execution
+// Integrates Market Calendar, Depth Absorption, OI Liquidity, DTE Regimes, and Master Lot Sizing.
 
 import {
   LiveTradeSignal,
   PreTradeValidationResult,
   MarketSessionState,
-  ActivePosition
+  ActivePosition,
+  RejectionCode
 } from '../types';
+import { evaluateMarketCalendar } from './marketCalendar';
+import { evaluateDteRegime, calculatePortfolioGreeks, calculateVolatilityAdjustedStop } from './optionEngine';
 
-/**
- * Returns the current live Indian Market session state based on IST (Asia/Kolkata)
- */
-export function getMarketSessionState(overrideTime?: Date): {
-  state: MarketSessionState;
-  istTimeFormatted: string;
-  isRegularTradingAllowed: boolean;
-  message: string;
-} {
-  const now = overrideTime || new Date();
-  
-  // Format to IST hours & minutes
-  const istString = now.toLocaleTimeString('en-US', {
-    timeZone: 'Asia/Kolkata',
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  });
-
-  const [hourStr, minStr] = istString.split(':');
-  const hour = parseInt(hourStr, 10);
-  const minute = parseInt(minStr, 10);
-  const timeNum = hour * 100 + minute;
-
-  // Check Weekend (Saturday: 6, Sunday: 0) in IST
-  const istDayStr = now.toLocaleDateString('en-US', {
-    timeZone: 'Asia/Kolkata',
-    weekday: 'short'
-  });
-  const isWeekend = istDayStr === 'Sat' || istDayStr === 'Sun';
-
-  if (isWeekend) {
-    return {
-      state: 'CLOSED',
-      istTimeFormatted: `${istString} IST (${istDayStr})`,
-      isRegularTradingAllowed: false,
-      message: 'Exchange Closed for Weekend'
-    };
-  }
-
-  // Pre-Open: 09:00 - 09:14 IST
-  if (timeNum >= 900 && timeNum < 915) {
-    return {
-      state: 'PREOPEN',
-      istTimeFormatted: `${istString} IST`,
-      isRegularTradingAllowed: false,
-      message: 'Pre-Open Discovery Session (09:00 - 09:15 IST)'
-    };
-  }
-
-  // Regular Trading Session: 09:15 - 15:15 IST
-  if (timeNum >= 915 && timeNum < 1515) {
-    return {
-      state: 'OPEN',
-      istTimeFormatted: `${istString} IST`,
-      isRegularTradingAllowed: true,
-      message: 'Regular Market Trading Session Active'
-    };
-  }
-
-  // Intraday Auto-Squareoff & Closing Session: 15:15 - 15:30 IST
-  if (timeNum >= 1515 && timeNum < 1530) {
-    return {
-      state: 'CLOSING',
-      istTimeFormatted: `${istString} IST`,
-      isRegularTradingAllowed: false,
-      message: 'Closing & MIS Auto-Squareoff Session (15:15 - 15:30 IST)'
-    };
-  }
-
-  // Market Closed: 15:30 - 09:00 next day
-  return {
-    state: 'CLOSED',
-    istTimeFormatted: `${istString} IST`,
-    isRegularTradingAllowed: false,
-    message: 'Market Closed (After-Market Hours)'
-  };
-}
+export { getMarketSessionState } from './marketCalendarLegacy';
 
 /**
  * Calculates complete Indian F&O regulatory taxes & transaction charges
@@ -147,39 +73,60 @@ export function calculateIndianFnoTransactionCosts(
 }
 
 /**
- * Calculates risk-based position sizing based on account equity and stop loss distance
+ * Calculates risk-based position sizing based on account equity, stop loss distance,
+ * instrument master lot size, and maximum premium-at-risk caps.
+ * LOT SIZE IS DERIVED EXCLUSIVELY FROM THE INSTRUMENT MASTER (Never signal quantity).
  */
 export function calculateRiskBasedQuantity(
   accountEquity: number,
   entryPrice: number,
   stopLossPrice: number,
-  lotSize: number,
-  riskPct: number = 0.5
+  instrumentMasterLotSize: number,
+  riskPct: number = 0.5,
+  maxPremiumAtRiskINR?: number
 ): {
   quantity: number;
   lotCount: number;
   riskBudgetINR: number;
   riskPerLotINR: number;
+  totalPremiumINR: number;
+  cappedByMaxPremium: boolean;
 } {
   const safeEquity = Math.max(10000, accountEquity || 100000);
   const riskBudgetINR = +(safeEquity * (riskPct / 100)).toFixed(2);
   const priceDistance = Math.max(0.20, Math.abs(entryPrice - stopLossPrice));
-  const riskPerLotINR = +(priceDistance * Math.max(1, lotSize)).toFixed(2);
+  const validLotSize = Math.max(1, instrumentMasterLotSize || 1);
 
-  const rawLots = Math.floor(riskBudgetINR / riskPerLotINR);
-  const lotCount = Math.max(1, rawLots);
-  const quantity = lotCount * Math.max(1, lotSize);
+  const riskPerLotINR = +(priceDistance * validLotSize).toFixed(2);
+  let rawLots = Math.floor(riskBudgetINR / Math.max(1, riskPerLotINR));
+  let lotCount = Math.max(1, rawLots);
+
+  // Cap with Maximum Premium at Risk (e.g. 10% of equity or max ₹15,000)
+  const effectiveMaxPremium = maxPremiumAtRiskINR || Math.min(25000, safeEquity * 0.15);
+  let totalPremiumINR = lotCount * validLotSize * entryPrice;
+  let cappedByMaxPremium = false;
+
+  while (lotCount > 1 && totalPremiumINR > effectiveMaxPremium) {
+    lotCount -= 1;
+    totalPremiumINR = lotCount * validLotSize * entryPrice;
+    cappedByMaxPremium = true;
+  }
+
+  const quantity = lotCount * validLotSize;
 
   return {
     quantity,
     lotCount,
     riskBudgetINR,
-    riskPerLotINR
+    riskPerLotINR,
+    totalPremiumINR: +(totalPremiumINR).toFixed(2),
+    cappedByMaxPremium
   };
 }
 
 export interface RiskGateValidationParams {
   signal: LiveTradeSignal;
+  resolvedInstrumentLotSize: number; // Strictly derived from instrument master
   liveQuote?: any;
   liveLtp?: number;
   activePositions?: ActivePosition[];
@@ -190,17 +137,19 @@ export interface RiskGateValidationParams {
   maxPortfolioDirectionalLimit?: number; // max 3 concurrent correlated positions
   staleThresholdMs?: number; // default 3000ms
   slippageTolerancePct?: number; // default 1.5%
+  overrideTime?: Date;
 }
 
 /**
- * Independent Pre-Trade Risk & Execution Gate
- * Strictly evaluates market session, freshness, depth, spread, slippage,
- * correlation, daily loss threshold, and consecutive losses.
+ * Institutional Pre-Trade Risk & Execution Gate
+ * Strictly evaluates session calendar, opening filters, EOD cutoffs, freshness,
+ * depth absorption, OI/volume liquidity, spread, slippage, IV sanity, and sizing.
  */
 export function evaluatePreTradeRiskGate(params: RiskGateValidationParams): PreTradeValidationResult {
   const nowMs = Date.now();
   const {
     signal,
+    resolvedInstrumentLotSize,
     liveQuote,
     liveLtp = signal.currentLtp || signal.entryPrice,
     activePositions = [],
@@ -210,7 +159,8 @@ export function evaluatePreTradeRiskGate(params: RiskGateValidationParams): PreT
     isServerKillSwitchActive = false,
     maxPortfolioDirectionalLimit = 3,
     staleThresholdMs = 3000,
-    slippageTolerancePct = 1.5
+    slippageTolerancePct = 1.5,
+    overrideTime
   } = params;
 
   // 1. Server-Side Kill Switch Check
@@ -225,7 +175,47 @@ export function evaluatePreTradeRiskGate(params: RiskGateValidationParams): PreT
     };
   }
 
-  // 2. Daily Loss Limit Gate (-2% of Account Equity)
+  // 2. Official Indian Market Calendar & Trading Session Gate
+  const calendarStatus = evaluateMarketCalendar(overrideTime);
+  if (!calendarStatus.isOpen) {
+    return {
+      approved: false,
+      rejectionCode: calendarStatus.isHoliday ? 'HOLIDAY_CLOSED' : 'MARKET_SESSION_CLOSED',
+      reason: calendarStatus.reason,
+      goldenGateScore: signal.goldenGateScore,
+      attribution: signal.strategyAttribution,
+      timestampMs: nowMs
+    };
+  }
+
+  // 3. Opening Volatility Discovery Gate (09:15 - 09:25 IST)
+  if (calendarStatus.isOpeningFilterActive) {
+    // If signal confluence score is not exceptionally high (e.g. >= 90), block early entry
+    if ((signal.goldenGateScore || 0) < 90) {
+      return {
+        approved: false,
+        rejectionCode: 'OPENING_VOLATILITY_FILTER',
+        reason: 'Opening Volatility Filter (09:15 - 09:25 IST): Early morning market structure establishing. Entry restricted.',
+        goldenGateScore: signal.goldenGateScore,
+        attribution: signal.strategyAttribution,
+        timestampMs: nowMs
+      };
+    }
+  }
+
+  // 4. End-of-Day Intraday Entry Cutoff Gate (14:45+ IST)
+  if (calendarStatus.isEodCutoffActive) {
+    return {
+      approved: false,
+      rejectionCode: 'EOD_ENTRY_CUTOFF',
+      reason: 'EOD Entry Cutoff Active (14:45 - 15:15 IST): No new intraday MIS positions allowed to avoid overnight carry risks.',
+      goldenGateScore: signal.goldenGateScore,
+      attribution: signal.strategyAttribution,
+      timestampMs: nowMs
+    };
+  }
+
+  // 5. Daily Loss Limit Gate (-2% of Account Equity)
   const maxDailyLossAllowed = -(accountEquity * 0.02);
   if (dailyRealizedPnlINR <= maxDailyLossAllowed) {
     return {
@@ -238,19 +228,19 @@ export function evaluatePreTradeRiskGate(params: RiskGateValidationParams): PreT
     };
   }
 
-  // 3. Consecutive Loss Cooldown Gate (3 Consecutive Losses)
+  // 6. Consecutive Loss Cooldown Gate (3 Consecutive Losses)
   if (consecutiveLossCount >= 3) {
     return {
       approved: false,
       rejectionCode: 'CONSECUTIVE_LOSSES_COOLDOWN',
-      reason: `3 consecutive losing trades detected. Execution paused for cooldown discipline.`,
+      reason: `3 consecutive losing trades detected. Execution paused for risk discipline cooldown.`,
       goldenGateScore: signal.goldenGateScore,
       attribution: signal.strategyAttribution,
       timestampMs: nowMs
     };
   }
 
-  // 4. Live Data Freshness Gate
+  // 7. Live Data Freshness Gate
   const quoteTimestamp = liveQuote?.timestampMs || signal.dataTimestampMs || 0;
   const quoteAgeMs = nowMs - quoteTimestamp;
   if (signal.source !== 'ZERODHA_KITE_LIVE' || quoteAgeMs > staleThresholdMs) {
@@ -264,7 +254,7 @@ export function evaluatePreTradeRiskGate(params: RiskGateValidationParams): PreT
     };
   }
 
-  // 5. Final LTP Price Slippage Recheck
+  // 8. Final LTP Price Slippage Recheck
   const priceDiscrepancyPct = Math.abs(signal.entryPrice - liveLtp) / Math.max(0.1, liveLtp) * 100;
   if (priceDiscrepancyPct > slippageTolerancePct) {
     return {
@@ -278,7 +268,7 @@ export function evaluatePreTradeRiskGate(params: RiskGateValidationParams): PreT
     };
   }
 
-  // 6. Bid/Ask Spread Filter (Reject if spread / midPrice > 1.5%)
+  // 9. Bid/Ask Spread Filter (Reject if spread / midPrice > 1.5%)
   if (liveQuote?.depth?.buy?.[0] && liveQuote?.depth?.sell?.[0]) {
     const topBid = liveQuote.depth.buy[0].price;
     const topAsk = liveQuote.depth.sell[0].price;
@@ -296,8 +286,35 @@ export function evaluatePreTradeRiskGate(params: RiskGateValidationParams): PreT
     }
   }
 
-  // 7. Market Regime Check (Block Directional Option Buying in Choppy Sideways)
-  if (signal.marketRegime === 'CHOPPY_SIDEWAYS' && (signal.optionStyle === 'CALL' || signal.optionStyle === 'PUT')) {
+  // 10. Volume & Open Interest Liquidity Threshold
+  const isOption = signal.optionStyle === 'CALL' || signal.optionStyle === 'PUT';
+  const volume = liveQuote?.volume || 0;
+  const oi = liveQuote?.oi || 0;
+  if (isOption && volume > 0 && volume < 2000 && oi > 0 && oi < 15000) {
+    return {
+      approved: false,
+      rejectionCode: 'LOW_OI_VOLUME_LIQUIDITY',
+      reason: `Strike liquidity failure: Volume (${volume}) and Open Interest (${oi}) are below institutional execution thresholds.`,
+      goldenGateScore: signal.goldenGateScore,
+      attribution: signal.strategyAttribution,
+      timestampMs: nowMs
+    };
+  }
+
+  // 11. IV Sanity Filter (Block Buying Ultra-Inflated IV > 45%)
+  if (isOption && signal.actualIV && signal.actualIV > 45) {
+    return {
+      approved: false,
+      rejectionCode: 'IV_INFLATION_SANITY',
+      reason: `IV Inflation Sanity: Implied Volatility (${signal.actualIV.toFixed(1)}%) is excessively inflated. Buying here carries severe IV crush risk.`,
+      goldenGateScore: signal.goldenGateScore,
+      attribution: signal.strategyAttribution,
+      timestampMs: nowMs
+    };
+  }
+
+  // 12. Market Regime Check (Block Directional Option Buying in Choppy Sideways)
+  if (signal.marketRegime === 'CHOPPY_SIDEWAYS' && isOption) {
     return {
       approved: false,
       rejectionCode: 'CHOPPY_REGIME_OPTION_BUY_BLOCKED',
@@ -308,7 +325,7 @@ export function evaluatePreTradeRiskGate(params: RiskGateValidationParams): PreT
     };
   }
 
-  // 8. Portfolio Correlation & Max Directional Exposure Gate
+  // 13. Portfolio Correlation & Max Directional Exposure Gate
   const openPositions = activePositions.filter(p => p.status === 'OPEN');
   const isBullishSignal = signal.direction === 'BUY' && (signal.optionStyle === 'CALL' || signal.optionStyle === 'EQUITY');
   const isBearishSignal = signal.direction === 'BUY' && signal.optionStyle === 'PUT';
@@ -332,8 +349,8 @@ export function evaluatePreTradeRiskGate(params: RiskGateValidationParams): PreT
     };
   }
 
-  // 9. Calculate Risk-Adjusted Sizing
-  const lotSize = signal.zerodhaPayload?.quantity || (signal.symbol.includes('BANKNIFTY') ? 15 : signal.symbol.includes('NIFTY') ? 65 : 1);
+  // 14. Calculate Risk-Adjusted Sizing STRICTLY FROM INSTRUMENT MASTER LOT SIZE
+  const lotSize = Math.max(1, resolvedInstrumentLotSize || 1);
   const sizing = calculateRiskBasedQuantity(accountEquity, liveLtp, signal.stopLossPrice, lotSize, 0.5);
 
   return {
