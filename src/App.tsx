@@ -93,12 +93,13 @@ export default function App() {
     errorMsg?: string;
   } | null>(null);
 
-  // Live Market Quote Engine State
-  const [quotes, setQuotes] = useState<Record<string, { lastPrice: number; changePct: number; change: number; high: number; low: number }>>({});
+  // Live Market Quote Engine State (Strict Live Feed Only)
+  const [quotes, setQuotes] = useState<Record<string, { lastPrice: number; changePct: number; change?: number; high?: number; low?: number }>>({});
+  const [spotIndices, setSpotIndices] = useState<Record<string, number>>({});
   const [isFetchingQuotes, setIsFetchingQuotes] = useState<boolean>(false);
   const [autoSyncQuotes, setAutoSyncQuotes] = useState<boolean>(true);
   const [lastQuoteSyncTime, setLastQuoteSyncTime] = useState<string>('Not Synced');
-  const [quoteSource, setQuoteSource] = useState<'ZERODHA_WEBSOCKET' | 'SIMULATED_TICKER'>('SIMULATED_TICKER');
+  const [quoteSource, setQuoteSource] = useState<string>('DISCONNECTED');
 
   // AI Signal Scanning State
   const [isAiScanning, setIsAiScanning] = useState<boolean>(false);
@@ -282,7 +283,10 @@ export default function App() {
 
       if (data && data.success && data.quotes) {
         setQuotes(data.quotes);
-        setQuoteSource(data.source || 'SIMULATED_TICKER');
+        if (data.spotIndices) {
+          setSpotIndices(data.spotIndices);
+        }
+        setQuoteSource(data.source || 'ZERODHA_KITE_LIVE');
         const syncTime = new Date().toLocaleTimeString();
         setLastQuoteSyncTime(syncTime);
 
@@ -306,7 +310,7 @@ export default function App() {
           })
         );
 
-        // Update liveSignals with real-time LTP & dynamic quant re-evaluation
+        // Update liveSignals with real-time LTP & dynamic quant re-evaluation using actual spot indices
         setLiveSignals((prevSignals) =>
           prevSignals.map((sig) => {
             const q = data.quotes[sig.symbol] ||
@@ -314,9 +318,10 @@ export default function App() {
                       Object.entries(data.quotes).find(([k]) => k.toUpperCase() === sig.symbol.toUpperCase() || sig.symbol.toUpperCase().includes(k.toUpperCase()))?.[1];
             if (q && typeof (q as any).lastPrice === 'number' && (q as any).lastPrice > 0) {
               const liveLtp = (q as any).lastPrice;
-              const evaluated = evaluateContractQuantMetrics(sig.symbol, liveLtp, q);
+              const evaluated = evaluateContractQuantMetrics(sig.symbol, liveLtp, q, data.spotIndices);
               return {
                 ...sig,
+                source: 'ZERODHA_KITE_LIVE',
                 currentLtp: liveLtp,
                 entryPrice: liveLtp,
                 targetPrice: evaluated.targetPrice,
@@ -332,6 +337,9 @@ export default function App() {
                 greeks: evaluated.greeks,
                 likelihoodCalculation: evaluated.likelihoodCalculation,
                 laymanReason: evaluated.laymanReason,
+                spotPriceUsed: evaluated.spotPriceUsed,
+                underlyingSymbol: evaluated.underlyingSymbol,
+                marketRegime: evaluated.marketRegime,
                 zerodhaPayload: sig.zerodhaPayload ? {
                   ...sig.zerodhaPayload,
                   price: liveLtp
@@ -346,11 +354,15 @@ export default function App() {
           triggerUserFeedback(`Synchronized live Zerodha market quotes! Updated at ${syncTime}.`);
           addLog('SYSTEM', `Quotes updated from ${data.source}`);
         }
-      } else if (data && !data.success && !isAuto) {
-        triggerUserFeedback(`Market Quote Alert: ${data.message || 'Using simulated feed'}`, true);
+      } else if (data && !data.success) {
+        setQuoteSource('DISCONNECTED');
+        if (!isAuto) {
+          triggerUserFeedback(`Market Quote Alert: ${data.message || 'Live Kite feed disconnected'}`, true);
+        }
       }
     } catch (err: any) {
       console.warn('Notice while updating market quotes:', err?.message || err);
+      setQuoteSource('DISCONNECTED');
       if (!isAuto) {
         triggerUserFeedback(`Quote fetch error: ${err?.message || 'Check connection'}`, true);
       }
@@ -371,11 +383,17 @@ export default function App() {
     return () => clearInterval(interval);
   }, [autoSyncQuotes, zerodhaCreds.accessToken]);
 
-  // 🤖 AUTO-TRADING ENGINE LOOP (Selective High-Confidence Trades Only & Dynamic Trailing SL / Time-Stops)
+  // 🤖 AUTO-TRADING ENGINE LOOP (Strict Universal Rule: NO LIVE DATA = NO ORDER)
   useEffect(() => {
     if (!isAutoTrading) return;
 
     const interval = setInterval(() => {
+      // UNIVERSAL RULE ENFORCEMENT:
+      if (quoteSource !== 'ZERODHA_KITE_LIVE') {
+        addLog('SYSTEM', '⛔ AUTO-TRADER HALTED: Universal Rule Active (NO LIVE DATA = NO SIGNAL = NO ORDER). Waiting for Zerodha Kite live feed.');
+        return;
+      }
+
       const openPositions = positions.filter((p) => p.status === 'OPEN');
 
       // 1. Monitor Open Positions for TSL & Exit Conditions
@@ -409,35 +427,33 @@ export default function App() {
         }
       });
 
-      // 2. Selective Auto-Trade Scanning: ONLY TAKES TRADES IF CONFIDENT OF GETTING OUT IN PROFIT
-      // Strict Criteria: Win Probability >= 85%, Risk:Reward >= 1.8, Expected Value > 0, NOT a Bad Trade / OTM Theta Trap, and not already active or recently exited
+      // 2. Selective Auto-Trade Scanning: Requires Live Provenance (source === 'ZERODHA_KITE_LIVE')
       const currentOpen = positions.filter((p) => p.status === 'OPEN');
       if (currentOpen.length < 3) {
         const highlyConfidentCandidates = liveSignals.filter((sig) => {
           const isAlreadyOpen = currentOpen.some((p) => p.symbol.toUpperCase() === sig.symbol.toUpperCase());
           const isRecentlyExited = !!recentlyExitedSymbols[sig.symbol];
           const hasPositiveEV = (sig.likelihoodCalculation?.expectedValueINR ?? 0) > 0;
-          const isHighConfidence = sig.winProbabilityPct >= 85 && !sig.isBadTradeWarning && !sig.isCounterTrend && hasPositiveEV;
+          const isLiveSource = sig.source === 'ZERODHA_KITE_LIVE';
+          const isHighConfidence = sig.winProbabilityPct >= 80 && !sig.isBadTradeWarning && !sig.isCounterTrend && hasPositiveEV;
           const isNotDiscarded = sig.status !== 'DISCARDED';
-          return isHighConfidence && !isAlreadyOpen && !isRecentlyExited && isNotDiscarded;
+          return isLiveSource && isHighConfidence && !isAlreadyOpen && !isRecentlyExited && isNotDiscarded;
         });
 
         if (highlyConfidentCandidates.length > 0) {
           highlyConfidentCandidates.sort((a, b) => b.winProbabilityPct - a.winProbabilityPct);
           const topSig = highlyConfidentCandidates[0];
-          addLog('SIGNAL', `🤖 AUTO-TRADER (≥85% PROFIT MANDATE): Executing ${topSig.symbol} (${topSig.winProbabilityPct}% Win Rate, EV: ₹${topSig.likelihoodCalculation?.expectedValueINR || 0}) [Order ${currentOpen.length + 1}/3]`, topSig.symbol);
-          addToast('INFO', 'Auto-Trader Selective Entry', `High profit-confidence signal (≥85%) detected: ${topSig.symbol} (${topSig.winProbabilityPct}% Win Rate). Routing order to Zerodha...`);
+          addLog('SIGNAL', `🤖 AUTO-TRADER (LIVE DATA VALIDATED): Executing ${topSig.symbol} (${topSig.winProbabilityPct}% Win Rate, EV: ₹${topSig.likelihoodCalculation?.expectedValueINR || 0}) [Order ${currentOpen.length + 1}/3]`, topSig.symbol);
+          addToast('INFO', 'Auto-Trader Selective Entry', `High profit-confidence signal (≥80%) detected from live feed: ${topSig.symbol} (${topSig.winProbabilityPct}% Win Rate). Routing order to Zerodha...`);
           handleExecuteSignalOnZerodha(topSig);
-        } else {
-          // Patient observation - No forced trades
-          // Auto trader stays disciplined when market edge is not clear
         }
       }
 
     }, 4000);
 
     return () => clearInterval(interval);
-  }, [isAutoTrading, positions, quotes, liveSignals, recentlyExitedSymbols]);
+  }, [isAutoTrading, positions, quotes, liveSignals, recentlyExitedSymbols, quoteSource]);
+
 
   // Disconnect Zerodha
   const handleDisconnectZerodha = () => {

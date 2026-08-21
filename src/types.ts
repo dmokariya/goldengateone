@@ -1,3 +1,6 @@
+export type DataFeedStatus = 'LIVE' | 'STALE' | 'UNAVAILABLE' | 'DISCONNECTED';
+export type SignalProvenanceSource = 'ZERODHA_KITE_LIVE' | 'INSUFFICIENT_DATA';
+
 export type ExecutionMode = 'HFT_SIM' | 'ZERODHA_KITE' | 'BACKTEST';
 
 export interface OrderDepthItem {
@@ -231,6 +234,14 @@ export interface LiveTradeSignal {
   expiryOrStrike?: string;
   expectedTimeHorizon: string; // e.g. "12 - 25 Mins (Intraday Scalp)"
   laymanReason?: string; // One-liner simple explanation
+  source: SignalProvenanceSource;
+  dataTimestampMs: number;
+  spotPriceUsed: number;
+  underlyingSymbol: string;
+  timeToExpiryYears?: number;
+  actualIV?: number;
+  riskFreeRate?: number;
+  marketRegime?: 'BULLISH_TREND' | 'BEARISH_TREND' | 'CHOPPY_SIDEWAYS' | 'HIGH_VOLATILITY';
   greeks?: OptionGreeks;
   isMustTakeTrade?: boolean; // 🔥 95%+ Win Rate CAS Squeeze Flag
   mustTakeReason?: string; // Explanation of CAS system loophole

@@ -823,7 +823,87 @@ async function startServer() {
     }
   });
 
-  // 2.5 Zerodha Live Quotes Endpoint (Supports both GET and POST, and both /api/zerodha/quotes and /api/quotes)
+  // 2.4 Zerodha Historical Candle Data Endpoint (1m, 5m, 15m, 60m, day)
+  app.post("/api/zerodha/historical", async (req, res) => {
+    res.setHeader("Content-Type", "application/json");
+    try {
+      const { apiKey, accessToken, symbol, interval = "5minute", days = 2 } = req.body;
+      if (!apiKey || !accessToken) {
+        return res.status(400).json({
+          success: false,
+          source: 'UNAVAILABLE',
+          message: "Zerodha session required for historical candles."
+        });
+      }
+
+      // Resolve token
+      let token = "";
+      const resolved = resolveZerodhaInstrument(symbol || "NIFTY 50", "NSE") || resolveZerodhaInstrument(symbol || "NIFTY 50", "NFO");
+      if (resolved) {
+        token = resolved.token;
+      } else if (symbol === "NIFTY 50" || symbol === "NIFTY") {
+        token = "256265"; // NSE:NIFTY 50 token
+      } else if (symbol === "NIFTY BANK" || symbol === "BANKNIFTY") {
+        token = "260105"; // NSE:NIFTY BANK token
+      } else if (symbol === "FINNIFTY") {
+        token = "257801"; // NSE:FINNIFTY token
+      }
+
+      if (!token) {
+        return res.status(400).json({
+          success: false,
+          source: 'UNAVAILABLE',
+          message: `Unable to resolve instrument token for ${symbol}`
+        });
+      }
+
+      const toDate = new Date();
+      const fromDate = new Date(Date.now() - (Number(days) || 2) * 24 * 3600 * 1000);
+      const toStr = toDate.toISOString().slice(0, 10);
+      const fromStr = fromDate.toISOString().slice(0, 10);
+
+      const url = `https://api.kite.trade/instruments/historical/${token}/${interval}?from=${fromStr}&to=${toStr}`;
+      const { ok, data } = await safeKiteFetch(url, {
+        method: "GET",
+        headers: {
+          "X-Kite-Version": "3",
+          "Authorization": `token ${apiKey}:${accessToken}`
+        }
+      });
+
+      if (ok && data?.status === "success" && Array.isArray(data?.data?.candles)) {
+        const parsedCandles = data.data.candles.map((c: any[]) => ({
+          time: new Date(c[0]).toLocaleTimeString('en-US', { hour12: false }).slice(0, 5),
+          timestamp: new Date(c[0]).getTime(),
+          open: c[1],
+          high: c[2],
+          low: c[3],
+          close: c[4],
+          volume: c[5]
+        }));
+
+        return res.json({
+          success: true,
+          source: 'ZERODHA_KITE_LIVE',
+          candles: parsedCandles
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          source: 'UNAVAILABLE',
+          message: data?.message || "Failed to fetch historical candles from Kite API."
+        });
+      }
+    } catch (err: any) {
+      return res.status(500).json({
+        success: false,
+        source: 'UNAVAILABLE',
+        message: err.message || "Historical candle fetch failed."
+      });
+    }
+  });
+
+  // 2.5 Zerodha Live Quotes & Spot Index Endpoint (Strictly Live Data Only)
   const quotesHandler = async (req: express.Request, res: express.Response) => {
     res.setHeader("Content-Type", "application/json");
     try {
@@ -835,42 +915,6 @@ async function startServer() {
         : typeof instrumentsParam === 'string'
         ? instrumentsParam.split(',')
         : [];
-
-      // Base active market quotes dictionary with accurate current price baselines
-      const defaultQuotes: Record<string, { lastPrice: number; changePct: number; netChange: number; high: number; low: number; close: number }> = {
-        'NIFTY 24600 CE': { lastPrice: 42.50, changePct: 2.15, netChange: 0.90, high: 48.00, low: 36.00, close: 41.60 },
-        'NIFTY26AUG24600CE': { lastPrice: 42.50, changePct: 2.15, netChange: 0.90, high: 48.00, low: 36.00, close: 41.60 },
-        'NIFTY 24650 CE': { lastPrice: 18.20, changePct: -4.20, netChange: -0.80, high: 24.50, low: 15.10, close: 19.00 },
-        'NIFTY26AUG24650CE': { lastPrice: 18.20, changePct: -4.20, netChange: -0.80, high: 24.50, low: 15.10, close: 19.00 },
-        'NIFTY 24700 CE': { lastPrice: 6.80, changePct: -8.10, netChange: -0.60, high: 11.20, low: 5.40, close: 7.40 },
-        'NIFTY26AUG24700CE': { lastPrice: 6.80, changePct: -8.10, netChange: -0.60, high: 11.20, low: 5.40, close: 7.40 },
-        'NIFTY 24500 CE': { lastPrice: 112.50, changePct: 1.80, netChange: 2.00, high: 124.00, low: 104.00, close: 110.50 },
-        'NIFTY26AUG24500CE': { lastPrice: 112.50, changePct: 1.80, netChange: 2.00, high: 124.00, low: 104.00, close: 110.50 },
-        'NIFTY 24550 CE': { lastPrice: 74.30, changePct: 0.95, netChange: 0.70, high: 82.00, low: 68.00, close: 73.60 },
-        'NIFTY26AUG24550CE': { lastPrice: 74.30, changePct: 0.95, netChange: 0.70, high: 82.00, low: 68.00, close: 73.60 },
-        'NIFTY 24500 PE': { lastPrice: 38.20, changePct: -3.50, netChange: -1.40, high: 45.00, low: 32.00, close: 39.60 },
-        'NIFTY26AUG24500PE': { lastPrice: 38.20, changePct: -3.50, netChange: -1.40, high: 45.00, low: 32.00, close: 39.60 },
-        'NIFTY 24550 PE': { lastPrice: 58.60, changePct: -1.80, netChange: -1.10, high: 66.00, low: 52.00, close: 59.70 },
-        'NIFTY26AUG24550PE': { lastPrice: 58.60, changePct: -1.80, netChange: -1.10, high: 66.00, low: 52.00, close: 59.70 },
-        'NIFTY 24600 PE': { lastPrice: 86.40, changePct: 0.45, netChange: 0.40, high: 95.00, low: 78.00, close: 86.00 },
-        'NIFTY26AUG24600PE': { lastPrice: 86.40, changePct: 0.45, netChange: 0.40, high: 95.00, low: 78.00, close: 86.00 },
-        'NIFTY 24650 PE': { lastPrice: 122.50, changePct: 2.10, netChange: 2.50, high: 134.00, low: 114.00, close: 120.00 },
-        'NIFTY26AUG24650PE': { lastPrice: 122.50, changePct: 2.10, netChange: 2.50, high: 134.00, low: 114.00, close: 120.00 },
-        'NIFTY 24400 PE': { lastPrice: 16.40, changePct: -6.80, netChange: -1.20, high: 22.00, low: 13.50, close: 17.60 },
-        'NIFTY26AUG24400PE': { lastPrice: 16.40, changePct: -6.80, netChange: -1.20, high: 22.00, low: 13.50, close: 17.60 },
-        'BANKNIFTY 52000 CE': { lastPrice: 185.00, changePct: 0.85, netChange: 1.55, high: 210.00, low: 168.00, close: 183.45 },
-        'BANKNIFTY26AUG52000CE': { lastPrice: 185.00, changePct: 0.85, netChange: 1.55, high: 210.00, low: 168.00, close: 183.45 },
-        'BANKNIFTY 51800 PE': { lastPrice: 145.50, changePct: -0.65, netChange: -0.95, high: 168.00, low: 132.00, close: 146.45 },
-        'BANKNIFTY26AUG51800PE': { lastPrice: 145.50, changePct: -0.65, netChange: -0.95, high: 168.00, low: 132.00, close: 146.45 },
-        'FINNIFTY 23500 CE': { lastPrice: 52.00, changePct: 1.45, netChange: 0.75, high: 62.00, low: 44.00, close: 51.25 },
-        'FINNIFTY26AUG23500CE': { lastPrice: 52.00, changePct: 1.45, netChange: 0.75, high: 62.00, low: 44.00, close: 51.25 },
-        'RELIANCE': { lastPrice: 2985.40, changePct: 0.75, netChange: 22.15, high: 2998.00, low: 2960.00, close: 2963.25 },
-        'HDFCBANK': { lastPrice: 1460.20, changePct: -0.35, netChange: -5.10, high: 1472.00, low: 1452.00, close: 1465.30 },
-        'ICICIBANK': { lastPrice: 1082.10, changePct: 0.42, netChange: 4.50, high: 1088.00, low: 1074.00, close: 1077.60 },
-        'INFY': { lastPrice: 1540.30, changePct: 1.12, netChange: 17.10, high: 1548.00, low: 1520.00, close: 1523.20 },
-        'TCS': { lastPrice: 3912.80, changePct: 0.28, netChange: 11.00, high: 3930.00, low: 3890.00, close: 3901.80 },
-        'SBIN': { lastPrice: 825.00, changePct: 0.95, netChange: 7.75, high: 829.50, low: 816.00, close: 817.25 }
-      };
 
       // If active Zerodha key & access token are available, query Zerodha Kite Live Quote API
       if (apiKey && accessToken) {
@@ -897,8 +941,16 @@ async function startServer() {
                 'NSE:SBIN'
               ];
 
-          // Resolve requested instrument names to exact Kite symbols
-          const kiteQueryTokens = new Set<string>();
+          // Always include Spot Indices & VIX in live quote request for real Black-Scholes & regime calculations
+          const spotIndicesToFetch = [
+            'NSE:NIFTY 50',
+            'NSE:NIFTY BANK',
+            'NSE:NIFTY FIN SERVICE',
+            'BSE:SENSEX',
+            'NSE:INDIA VIX'
+          ];
+
+          const kiteQueryTokens = new Set<string>(spotIndicesToFetch);
           const symbolAliases = new Map<string, string[]>(); // kiteKey -> displaySymbols
 
           for (const item of rawList) {
@@ -943,6 +995,8 @@ async function startServer() {
 
           if (ok && data && data.status === 'success' && data.data) {
             const fetchedQuotes: Record<string, any> = {};
+            const spotIndices: Record<string, number> = {};
+
             for (const [instKey, item] of Object.entries<any>(data.data)) {
               const symbolOnly = instKey.split(':')[1] || instKey;
               const lastPrice = item.last_price || item.ohlc?.close || 0;
@@ -957,11 +1011,21 @@ async function startServer() {
                 high: item.ohlc?.high || lastPrice,
                 low: item.ohlc?.low || lastPrice,
                 close,
-                open: item.ohlc?.open || lastPrice
+                open: item.ohlc?.open || lastPrice,
+                volume: item.volume || 0,
+                oi: item.oi || 0,
+                depth: item.depth || null,
+                timestampMs: Date.now()
               };
 
               fetchedQuotes[symbolOnly] = quoteObj;
               fetchedQuotes[instKey] = quoteObj;
+
+              if (instKey === 'NSE:NIFTY 50' || symbolOnly === 'NIFTY 50') spotIndices['NIFTY 50'] = lastPrice;
+              if (instKey === 'NSE:NIFTY BANK' || symbolOnly === 'NIFTY BANK') spotIndices['NIFTY BANK'] = lastPrice;
+              if (instKey === 'NSE:NIFTY FIN SERVICE' || symbolOnly === 'NIFTY FIN SERVICE') spotIndices['FINNIFTY'] = lastPrice;
+              if (instKey === 'BSE:SENSEX' || symbolOnly === 'SENSEX') spotIndices['SENSEX'] = lastPrice;
+              if (instKey === 'NSE:INDIA VIX' || symbolOnly === 'INDIA VIX') spotIndices['INDIA VIX'] = lastPrice;
 
               const aliases = symbolAliases.get(instKey) || [];
               for (const alias of aliases) {
@@ -969,53 +1033,53 @@ async function startServer() {
               }
             }
 
-            console.log(`[Zerodha Gateway] Live Quotes fetched directly from Kite (${Object.keys(fetchedQuotes).length} symbols)`);
+            console.log(`[Zerodha Gateway] Live Quotes fetched directly from Kite (${Object.keys(fetchedQuotes).length} symbols, Spot Nifty: ₹${spotIndices['NIFTY 50'] || 'N/A'})`);
 
             return res.json({
               success: true,
               source: 'ZERODHA_KITE_LIVE',
-              quotes: { ...defaultQuotes, ...fetchedQuotes },
+              quotes: fetchedQuotes,
+              spotIndices,
+              dataTimestampMs: Date.now(),
               timestamp: new Date().toLocaleTimeString(),
               message: 'Live quotes retrieved directly from Zerodha Kite API.'
             });
+          } else {
+            return res.status(400).json({
+              success: false,
+              source: 'UNAVAILABLE',
+              quotes: {},
+              message: data?.message || 'Zerodha Kite quote query failed.'
+            });
           }
         } catch (kiteErr: any) {
-          console.warn('Zerodha Kite Live Quote fetch failed, falling back to live market quotes:', kiteErr.message);
+          console.warn('Zerodha Kite Live Quote fetch failed:', kiteErr.message);
+          return res.status(502).json({
+            success: false,
+            source: 'UNAVAILABLE',
+            quotes: {},
+            message: `Kite Live Quote fetch failed: ${kiteErr.message}`
+          });
         }
       }
 
-      // Return default quotes with subtle realistic micro-tick fluctuations
-      const tickedQuotes = { ...defaultQuotes };
-      for (const k of Object.keys(tickedQuotes)) {
-        const item = tickedQuotes[k];
-        const microDelta = (Math.random() - 0.48) * (item.lastPrice * 0.001);
-        const newPrice = +(item.lastPrice + microDelta).toFixed(2);
-        tickedQuotes[k] = {
-          ...item,
-          lastPrice: newPrice
-        };
-      }
-
+      // No Live Credentials Provided: Return strict UNAVAILABLE response
+      // NO FAKE OR RANDOM QUOTES ALLOWED (P0 Requirement)
       return res.json({
-        success: true,
-        source: apiKey && accessToken ? 'ZERODHA_KITE_FALLBACK' : 'REALTIME_FEED',
-        quotes: tickedQuotes,
+        success: false,
+        source: 'DISCONNECTED',
+        quotes: {},
+        dataTimestampMs: 0,
         timestamp: new Date().toLocaleTimeString(),
-        message: 'Live market quotes updated.'
+        message: 'Zerodha Kite not connected. Please log in with Kite credentials to stream live quotes.'
       });
     } catch (err: any) {
-      console.error('Error fetching quotes:', err);
-      return res.status(200).json({
-        success: true,
-        source: 'FALLBACK_FEED',
-        quotes: {
-          'NIFTY 24600 CE': { lastPrice: 103.50, changePct: 1.82, netChange: 1.85, high: 108.50, low: 98.00, close: 101.65 },
-          'NIFTY 24500 CE': { lastPrice: 142.50, changePct: 2.40, netChange: 3.35, high: 149.00, low: 136.00, close: 139.15 },
-          'BANKNIFTY 52000 CE': { lastPrice: 280.00, changePct: 0.85, netChange: 2.35, high: 295.00, low: 268.00, close: 277.65 },
-          'RELIANCE': { lastPrice: 2985.40, changePct: 0.75, netChange: 22.15, high: 2998.00, low: 2960.00, close: 2963.25 }
-        },
-        timestamp: new Date().toLocaleTimeString(),
-        message: `Quotes loaded with fallback: ${err.message}`
+      console.error('Error in quotes handler:', err);
+      return res.status(500).json({
+        success: false,
+        source: 'UNAVAILABLE',
+        quotes: {},
+        message: `Quote handler error: ${err.message}`
       });
     }
   };
@@ -1025,357 +1089,42 @@ async function startServer() {
   app.get("/api/quotes", quotesHandler);
   app.post("/api/quotes", quotesHandler);
 
-  // Global In-Memory Signal Cache & Quota Cooldown Guard
-  let signalCache: { timestamp: number; contractKey: string; signals: any[] } | null = null;
-  let globalQuotaCooldownUntil = 0;
-
-  // 3. AI Contract & Signal Reader Endpoint (Gemini Powered)
-  app.post("/api/ai/read-signals", async (req, res) => {
-    const { selectedContract = "ALL", contractType = "ALL" } = req.body;
-    const cacheKey = `${selectedContract}_${contractType}`;
-
-    // Return cached signals if available and fresh (TTL 10 mins)
-    if (signalCache && signalCache.contractKey === cacheKey && (Date.now() - signalCache.timestamp < 10 * 60 * 1000)) {
-      return res.json({
-        success: true,
-        source: 'CACHE_MEMORY',
-        signals: signalCache.signals
-      });
-    }
-
-    // Helper for active fallback signals
-    const getFallbackSignals = () => {
-      const timeStr = new Date().toTimeString().split(' ')[0];
-      const baseList = [
-        {
-          id: 'sig-nifty-24500ce',
-          symbol: 'NIFTY26AUG24500CE',
-          exchange: 'NFO',
-          tradingsymbol: 'NIFTY26AUG24500CE',
-          category: 'NIFTY_FNO',
-          direction: 'BUY',
-          winProbabilityPct: 88,
-          entryPrice: 142.50,
-          targetPrice: 185.00,
-          stopLossPrice: 122.00,
-          riskRewardRatio: 2.07,
-          confidenceLevel: 'VERY_HIGH',
-          indicatorConfluence: ['EMA 9/21 Golden Cross', 'RSI Momentum > 62', 'Bid Imbalance 2.8x'],
-          timestamp: timeStr,
-          expiry: '27-AUG-2026',
-          quantity: 65,
-          product: 'MIS',
-          orderType: 'LIMIT'
-        },
-        {
-          id: 'sig-nifty-24500pe',
-          symbol: 'NIFTY26AUG24500PE',
-          exchange: 'NFO',
-          tradingsymbol: 'NIFTY26AUG24500PE',
-          category: 'NIFTY_FNO',
-          direction: 'BUY',
-          winProbabilityPct: 84,
-          entryPrice: 110.20,
-          targetPrice: 145.00,
-          stopLossPrice: 95.00,
-          riskRewardRatio: 2.29,
-          confidenceLevel: 'HIGH',
-          indicatorConfluence: ['VWAP Support Hold', 'Options Delta Neutral Spread', 'PCR 0.72'],
-          timestamp: timeStr,
-          expiry: '27-AUG-2026',
-          quantity: 65,
-          product: 'MIS',
-          orderType: 'LIMIT'
-        },
-        {
-          id: 'sig-banknifty-52000ce',
-          symbol: 'BANKNIFTY26AUG52000CE',
-          exchange: 'NFO',
-          tradingsymbol: 'BANKNIFTY26AUG52000CE',
-          category: 'BANKNIFTY_FNO',
-          direction: 'BUY',
-          winProbabilityPct: 82,
-          entryPrice: 280.00,
-          targetPrice: 345.00,
-          stopLossPrice: 250.00,
-          riskRewardRatio: 2.17,
-          confidenceLevel: 'HIGH',
-          indicatorConfluence: ['Supertrend Green Flip', 'BankNifty Orderbook 3.2x Buyers', 'VWAP Bounce'],
-          timestamp: timeStr,
-          expiry: '27-AUG-2026',
-          quantity: 30,
-          product: 'MIS',
-          orderType: 'LIMIT'
-        },
-        {
-          id: 'sig-finnifty-23500ce',
-          symbol: 'FINNIFTY26AUG23500CE',
-          exchange: 'NFO',
-          tradingsymbol: 'FINNIFTY26AUG23500CE',
-          category: 'FINNIFTY_FNO',
-          direction: 'BUY',
-          winProbabilityPct: 81,
-          entryPrice: 85.00,
-          targetPrice: 115.00,
-          stopLossPrice: 70.00,
-          riskRewardRatio: 2.00,
-          confidenceLevel: 'HIGH',
-          indicatorConfluence: ['EMA 9/21 Breakout', 'RSI 58.5 Momentum'],
-          timestamp: timeStr,
-          expiry: '27-AUG-2026',
-          quantity: 120, // 120 * 85 = 10,200 <= 50,000
-          product: 'MIS',
-          orderType: 'LIMIT'
-        },
-        {
-          id: 'sig-reliance',
-          symbol: 'RELIANCE',
-          exchange: 'NSE',
-          tradingsymbol: 'RELIANCE',
-          category: 'EQUITY_INTRADAY',
-          direction: 'BUY',
-          winProbabilityPct: 89,
-          entryPrice: 2985.40,
-          targetPrice: 3040.00,
-          stopLossPrice: 2955.00,
-          riskRewardRatio: 1.79,
-          confidenceLevel: 'VERY_HIGH',
-          indicatorConfluence: ['Intraday High Breakout', 'Institutional Buying Volume Spike 3.5x'],
-          timestamp: timeStr,
-          expiry: 'EQUITY',
-          quantity: 15, // 15 * 2985.4 = 44,781 <= 50,000
-          product: 'MIS',
-          orderType: 'LIMIT'
-        },
-        {
-          id: 'sig-hdfcbank',
-          symbol: 'HDFCBANK',
-          exchange: 'NSE',
-          tradingsymbol: 'HDFCBANK',
-          category: 'EQUITY_INTRADAY',
-          direction: 'SELL',
-          winProbabilityPct: 79,
-          entryPrice: 1460.20,
-          targetPrice: 1432.00,
-          stopLossPrice: 1475.00,
-          riskRewardRatio: 1.90,
-          confidenceLevel: 'HIGH',
-          indicatorConfluence: ['EMA Death Cross (1m)', 'RSI Breakdown < 40'],
-          timestamp: timeStr,
-          expiry: 'EQUITY',
-          quantity: 30, // 30 * 1460.2 = 43,806 <= 50,000
-          product: 'MIS',
-          orderType: 'LIMIT'
-        },
-        {
-          id: 'sig-icicibank',
-          symbol: 'ICICIBANK',
-          exchange: 'NSE',
-          tradingsymbol: 'ICICIBANK',
-          category: 'EQUITY_INTRADAY',
-          direction: 'BUY',
-          winProbabilityPct: 86,
-          entryPrice: 1082.10,
-          targetPrice: 1115.00,
-          stopLossPrice: 1065.00,
-          riskRewardRatio: 1.92,
-          confidenceLevel: 'HIGH',
-          indicatorConfluence: ['VWAP Recovery', 'RSI 61.2 Momentum'],
-          timestamp: timeStr,
-          expiry: 'EQUITY',
-          quantity: 40, // 40 * 1082.1 = 43,284 <= 50,000
-          product: 'MIS',
-          orderType: 'LIMIT'
-        },
-        {
-          id: 'sig-tcs',
-          symbol: 'TCS',
-          exchange: 'NSE',
-          tradingsymbol: 'TCS',
-          category: 'EQUITY_INTRADAY',
-          direction: 'BUY',
-          winProbabilityPct: 83,
-          entryPrice: 3912.80,
-          targetPrice: 3980.00,
-          stopLossPrice: 3880.00,
-          riskRewardRatio: 2.05,
-          confidenceLevel: 'HIGH',
-          indicatorConfluence: ['IT Sector Outperformance', 'EMA 9/21 Expansion'],
-          timestamp: timeStr,
-          expiry: 'EQUITY',
-          quantity: 12, // 12 * 3912.8 = 46,953 <= 50,000
-          product: 'MIS',
-          orderType: 'LIMIT'
-        }
-      ];
-
-      if (selectedContract && selectedContract !== "ALL" && selectedContract !== "ALL_CONTRACTS") {
-        return baseList.filter(s => s.symbol.toLowerCase().includes(selectedContract.toLowerCase()) || selectedContract.toLowerCase().includes(s.symbol.toLowerCase()));
-      }
-      return baseList;
-    };
-
+  // 3. Optional AI Plain-English Signal Explanation Endpoint (Gemini Powered)
+  // Strictly explains ALREADY CALCULATED quant signals; NEVER invents prices, win rates, or orders.
+  app.post("/api/ai/explain-signal", async (req, res) => {
     try {
-      const prompt = `You are an AI Quant Engine for Indian Markets (${selectedContract}, type: ${contractType}).
-Active Expiry Period: August 2026.
-Generate 5-8 actionable, high-probability quantitative trade signals across active liquid Zerodha contracts:
-- NIFTY Options (e.g. "NIFTY 24500 CE", "NIFTY 24500 PE", tradingsymbol: "NIFTY26AUG24500CE")
-- BANKNIFTY Options (e.g. "BANKNIFTY 52000 CE", "BANKNIFTY 51800 PE", tradingsymbol: "BANKNIFTY26AUG52000CE")
-- FINNIFTY Options (e.g. "FINNIFTY 23500 CE", tradingsymbol: "FINNIFTY26AUG23500CE")
-- Liquid Equities ("RELIANCE", "HDFCBANK", "ICICIBANK", "TCS", "INFY", "SBIN")
-
-Zerodha Constraints:
-- Order Value MUST NOT exceed ₹50,000 per order (e.g. entryPrice * quantity <= 50000).
-- Option lot sizes: NIFTY=50, BANKNIFTY=15, FINNIFTY=40, Equity=1.
-
-Return ONLY valid JSON format:
-{
-  "signals": [
-    {
-      "id": "sig-1",
-      "symbol": "NIFTY 24500 CE",
-      "exchange": "NFO",
-      "tradingsymbol": "NIFTY26AUG24500CE",
-      "category": "NIFTY_FNO",
-      "direction": "BUY",
-      "winProbabilityPct": 88,
-      "entryPrice": 142.50,
-      "targetPrice": 185.00,
-      "stopLossPrice": 122.00,
-      "riskRewardRatio": 2.1,
-      "confidenceLevel": "VERY_HIGH",
-      "indicatorConfluence": ["EMA 9/21 Golden Cross", "RSI Momentum > 60"],
-      "timestamp": "14:30:00",
-      "expiry": "27-AUG-2026",
-      "quantity": 100,
-      "product": "MIS",
-      "orderType": "LIMIT"
-    }
-  ]
-}`;
-
-      let rawSignals: any[] = [];
-      let isQuotaExhausted = false;
-      const modelsToTry = ["gemini-3.6-flash", "gemini-flash-latest"];
-      
-      for (const modelName of modelsToTry) {
-        if (rawSignals.length > 0 || isQuotaExhausted) break;
-        
-        for (let attempt = 1; attempt <= 2; attempt++) {
-          try {
-            const response = await ai.models.generateContent({
-              model: modelName,
-              contents: prompt,
-              config: {
-                responseMimeType: "application/json"
-              }
-            });
-
-            const text = response.text || "{}";
-            const parsedData = JSON.parse(text);
-            if (Array.isArray(parsedData.signals) && parsedData.signals.length > 0) {
-              rawSignals = parsedData.signals;
-              break; // Success!
-            }
-          } catch (geminiErr: any) {
-            const status = geminiErr?.status || geminiErr?.code || (geminiErr?.message?.includes("429") ? 429 : 0);
-            const isRateLimit = status === 429 || geminiErr?.message?.includes("RESOURCE_EXHAUSTED") || geminiErr?.message?.includes("Quota exceeded");
-            const isTransient = status === 503 || geminiErr?.message?.includes("503") || geminiErr?.message?.includes("UNAVAILABLE");
-
-            if (isRateLimit) {
-              // Daily API Quota limit reached; immediately fall back to High-Precision Quant Engine without retrying
-              isQuotaExhausted = true;
-              break;
-            }
-
-            if (isTransient && attempt === 1) {
-              // Short delay before retry on 503 spike
-              await new Promise((resolve) => setTimeout(resolve, 600));
-              continue;
-            }
-            break;
-          }
-        }
+      const { signal } = req.body;
+      if (!signal || !signal.symbol) {
+        return res.status(400).json({ success: false, message: "Signal object required." });
       }
 
-      if (rawSignals.length === 0) {
-        rawSignals = getFallbackSignals();
-      }
+      const prompt = `You are a quantitative trading desk assistant. Write a concise, 1-2 sentence professional analytical summary of why this mathematically calculated trade was flagged:
+Symbol: ${signal.symbol} (${signal.category})
+Direction: ${signal.direction}
+Entry Price: ₹${signal.entryPrice}, Target: ₹${signal.targetPrice}, Stop Loss: ₹${signal.stopLossPrice}
+Win Probability: ${signal.winProbabilityPct}%
+Expected Value: ₹${signal.likelihoodCalculation?.expectedValueINR ?? 'N/A'}
+Delta: ${signal.greeks?.delta ?? 'N/A'}, Relative Theta Decay: ${signal.greeks?.thetaDecayPctPerDay ?? 0}%/day
+Indicator Confluence: ${(signal.indicatorConfluence || []).join(', ')}
+Bad Trade Warning: ${signal.isBadTradeWarning ? 'YES (' + signal.badTradeReason + ')' : 'NO'}
+Must Take Flag: ${signal.isMustTakeTrade ? 'YES (' + signal.mustTakeReason + ')' : 'NO'}
 
-      const normalizedSignals = rawSignals.map((s: any, idx: number) => {
-        const symbol = s.symbol || 'NIFTY 24500 CE';
-        const entryPrice = Math.max(1, Number(s.entryPrice) || 100);
-        const roundedPrice = Math.max(0.05, Math.round(entryPrice * 20) / 20);
-        
-        let lotSize = 1;
-        if (symbol.includes('BANKNIFTY')) lotSize = 15;
-        else if (symbol.includes('FINNIFTY')) lotSize = 40;
-        else if (symbol.includes('NIFTY')) lotSize = 50;
+Output ONLY the concise 1-2 sentence explanation. Do not change any numbers or recommend different prices.`;
 
-        // Strict limit: Max ₹50,000 per order
-        const maxQtyValue = 50000;
-        const maxRawQty = Math.floor(maxQtyValue / roundedPrice);
-        let safeQty = Number(s.quantity) || lotSize;
-
-        if (lotSize > 1) {
-          const maxLots = Math.floor(maxRawQty / lotSize);
-          const desiredLots = Math.floor(safeQty / lotSize) || 1;
-          safeQty = Math.max(lotSize, Math.min(desiredLots, maxLots) * lotSize);
-        } else {
-          safeQty = Math.max(1, Math.min(safeQty, Math.max(1, maxRawQty)));
-        }
-
-        const tradingsymbol = s.tradingsymbol || s.zerodhaPayload?.tradingsymbol || symbol.replace(/\s+/g, '');
-        const exchange = s.exchange || (symbol.includes('CE') || symbol.includes('PE') ? 'NFO' : 'NSE');
-
-        return {
-          id: s.id || `sig-${Date.now()}-${idx}`,
-          symbol,
-          category: s.category || (symbol.includes('BANKNIFTY') ? 'BANKNIFTY_FNO' : symbol.includes('FINNIFTY') ? 'FINNIFTY_FNO' : symbol.includes('NIFTY') ? 'NIFTY_FNO' : 'EQUITY_INTRADAY'),
-          assetName: s.assetName || symbol,
-          direction: s.direction || 'BUY',
-          timeframe: s.timeframe || '5m',
-          entryPrice: roundedPrice,
-          targetPrice: Number(s.targetPrice) || Math.round(roundedPrice * 1.25 * 100) / 100,
-          stopLossPrice: Number(s.stopLossPrice) || Math.round(roundedPrice * 0.88 * 100) / 100,
-          winProbabilityPct: Number(s.winProbabilityPct) || 85,
-          riskRewardRatio: Number(s.riskRewardRatio) || 2.2,
-          confidenceLevel: s.confidenceLevel || 'HIGH',
-          indicatorConfluence: Array.isArray(s.indicatorConfluence) ? s.indicatorConfluence : ['EMA 9/21 Golden Cross', 'RSI > 58 Momentum'],
-          timestamp: s.timestamp || new Date().toTimeString().split(' ')[0],
-          expiryOrStrike: s.expiry || s.expiryOrStrike || '27-AUG-2026',
-          quantity: safeQty,
-          zerodhaPayload: {
-            tradingsymbol,
-            exchange,
-            transaction_type: s.direction || 'BUY',
-            quantity: safeQty,
-            order_type: 'LIMIT',
-            product: 'MIS',
-            price: roundedPrice
-          }
-        };
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt
       });
 
-      // Save in server-side cache
-      signalCache = {
-        timestamp: Date.now(),
-        contractKey: cacheKey,
-        signals: normalizedSignals
-      };
-
+      const explanation = response.text?.trim() || signal.laymanReason || "Mathematically evaluated setup.";
       return res.json({
         success: true,
-        source: 'LIVE_GEMINI',
-        signals: normalizedSignals
+        explanation
       });
     } catch (err: any) {
-      console.error("AI Signal Reading notice:", err?.message || err);
-      const fallbackList = getFallbackSignals();
       return res.json({
-        success: true,
-        source: 'QUANT_ENGINE',
-        signals: fallbackList
+        success: false,
+        explanation: req.body?.signal?.laymanReason || "Evaluated via Black-Scholes Delta and technical indicators."
       });
     }
   });
