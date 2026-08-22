@@ -58,7 +58,6 @@ import {
   saveAiMarkdownReportToDisk
 } from "./server/dataFileLogger.js";
 import {
-  refreshLiveSpotPrices,
   buildComprehensiveQuotes,
   getLiveSpot
 } from "./server/liveMarketData.js";
@@ -1457,13 +1456,10 @@ async function startServer() {
             'NSE:SBIN'
           ];
 
-      // Refresh public spot feeds in the background
-      await refreshLiveSpotPrices();
-
       // If active Zerodha key & access token are available, query Zerodha Kite Live Quote API
       if (apiKey && accessToken) {
         try {
-          // Always include Spot Indices & VIX in live quote request for real Black-Scholes & regime calculations
+          // Always include Spot Indices & VIX in live quote request
           const spotIndicesToFetch = [
             'NSE:NIFTY 50',
             'NSE:NIFTY BANK',
@@ -1507,7 +1503,7 @@ async function startServer() {
           const fetchedQuotes: Record<string, any> = {};
           const spotIndices: Record<string, number> = {};
 
-          // Fetch tokens in batches of 100 in parallel to cover the entire 100+ instrument universe
+          // Fetch tokens in batches of 100 in parallel to cover the entire universe
           const chunkSize = 100;
           const tokenBatches: string[][] = [];
           for (let i = 0; i < allTokens.length; i += chunkSize) {
@@ -1547,7 +1543,9 @@ async function startServer() {
                     volume: item.volume || 0,
                     oi: item.oi || 0,
                     depth: item.depth || null,
-                    timestampMs: Date.now()
+                    timestampMs: Date.now(),
+                    source: 'ZERODHA_KITE_LIVE',
+                    isLtpAvailable: lastPrice > 0
                   };
 
                   fetchedQuotes[symbolOnly] = quoteObj;
@@ -1569,47 +1567,53 @@ async function startServer() {
           );
 
           if (Object.keys(fetchedQuotes).length > 0) {
-            // Fill in any missing symbols with dynamic Black-Scholes pricing
             const comprehensive = buildComprehensiveQuotes(rawList, fetchedQuotes);
 
             return res.json({
               success: true,
               source: 'ZERODHA_KITE_LIVE',
-              quotes: { ...comprehensive.quotes, ...fetchedQuotes },
-              spotIndices: { ...comprehensive.spotIndices, ...spotIndices },
+              quotes: comprehensive.quotes,
+              spotIndices: comprehensive.spotIndices,
               dataTimestampMs: Date.now(),
               timestamp: new Date().toLocaleTimeString(),
-              message: 'Live quotes retrieved directly from Zerodha Kite API.'
+              isLtpAvailable: true,
+              message: 'Verified real-time quotes retrieved directly from Zerodha Kite API.'
             });
           }
         } catch (kiteErr: any) {
           console.warn('Zerodha Kite Live Quote fetch failed:', kiteErr.message);
+          recordPriceFeedErrorToFile({
+            timestamp: new Date().toLocaleTimeString(),
+            source: 'ZERODHA_KITE',
+            errorMessage: kiteErr.message || 'Kite quote request network failure',
+            recoveryAction: 'Marked prices as UNAVAILABLE (Fail Closed)',
+            impactLevel: 'HIGH'
+          });
         }
       }
 
-      // Real-time market feed & dynamic pricing when Kite is not connected or in shadow mode
-      const comprehensive = buildComprehensiveQuotes(rawList);
-
+      // FAIL CLOSED: If Kite credentials are not connected or Kite is unreachable
+      const comprehensive = buildComprehensiveQuotes(rawList, {});
       return res.json({
-        success: true,
-        source: 'REALTIME_PUBLIC_FEED',
+        success: false,
+        source: 'UNAVAILABLE',
         quotes: comprehensive.quotes,
         spotIndices: comprehensive.spotIndices,
-        dataTimestampMs: Date.now(),
+        dataTimestampMs: 0,
         timestamp: new Date().toLocaleTimeString(),
-        message: 'Real-time market quotes and dynamic option pricing synchronized.'
+        isLtpAvailable: false,
+        message: 'LTP UNAVAILABLE: Active Zerodha Kite session required. Please connect your Kite API in Settings.'
       });
     } catch (err: any) {
       console.error('Error in quotes handler:', err);
-      const fallback = buildComprehensiveQuotes(['NIFTY', 'BANKNIFTY', 'RELIANCE']);
-      return res.json({
-        success: true,
-        source: 'CALIBRATED_LIVE_ENGINE',
-        quotes: fallback.quotes,
-        spotIndices: fallback.spotIndices,
-        dataTimestampMs: Date.now(),
-        timestamp: new Date().toLocaleTimeString(),
-        message: 'Dynamic calibrated engine pricing.'
+      const comprehensive = buildComprehensiveQuotes([], {});
+      return res.status(500).json({
+        success: false,
+        source: 'UNAVAILABLE',
+        quotes: comprehensive.quotes,
+        spotIndices: {},
+        isLtpAvailable: false,
+        message: `Quote Server Error: ${err.message}`
       });
     }
   };

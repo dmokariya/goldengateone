@@ -22,7 +22,12 @@ import {
   AlertTriangle,
   Info,
   DollarSign,
-  IndianRupee
+  IndianRupee,
+  Bot,
+  Copy,
+  Check,
+  Save,
+  Github
 } from 'lucide-react';
 import { InfoTooltip } from './InfoTooltip';
 import { ActivePosition, LiveTradeSignal } from '../types';
@@ -44,7 +49,7 @@ export const DataFilesLogbook: React.FC<DataFilesLogbookProps> = ({
   addToast,
   liveQuotes = {}
 }) => {
-  const [activeTab, setActiveTab] = useState<'SUMMARY' | 'LIVE_PNL' | 'SHADOW_PNL' | 'REJECTED' | 'PRICE_ERRORS' | 'RAW_FILES'>('SUMMARY');
+  const [activeTab, setActiveTab] = useState<'SUMMARY' | 'LIVE_PNL' | 'SHADOW_PNL' | 'REJECTED' | 'PRICE_ERRORS' | 'RAW_FILES' | 'AI_CONSULTATION'>('SUMMARY');
   const [isLoading, setIsLoading] = useState(false);
   const [summaryData, setSummaryData] = useState<any>(null);
   const [liveOrders, setLiveOrders] = useState<any[]>([]);
@@ -53,6 +58,9 @@ export const DataFilesLogbook: React.FC<DataFilesLogbookProps> = ({
   const [rejectedTrades, setRejectedTrades] = useState<any[]>([]);
   const [priceErrors, setPriceErrors] = useState<any[]>([]);
   const [filterQuery, setFilterQuery] = useState('');
+  const [markdownReport, setMarkdownReport] = useState<string>('');
+  const [isCopied, setIsCopied] = useState(false);
+  const [isSavingDisk, setIsSavingDisk] = useState(false);
 
   const fetchAllData = async () => {
     setIsLoading(true);
@@ -92,10 +100,69 @@ export const DataFilesLogbook: React.FC<DataFilesLogbookProps> = ({
         const d = await errRes.json();
         setPriceErrors(d.priceErrors || []);
       }
+
+      // 6. Fetch AI Markdown Consultation Report
+      const mdRes = await fetch('/api/data-files/export-markdown').catch(() => null);
+      if (mdRes && mdRes.ok) {
+        const mdJson = await mdRes.json();
+        if (mdJson.markdown) {
+          setMarkdownReport(mdJson.markdown);
+        }
+      }
     } catch (e) {
       console.warn('Error refreshing data files:', e);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const copyMarkdownToClipboard = async () => {
+    try {
+      let text = markdownReport;
+      if (!text) {
+        const res = await fetch('/api/data-files/export-markdown');
+        const data = await res.json();
+        text = data.markdown || '';
+        setMarkdownReport(text);
+      }
+      await navigator.clipboard.writeText(text);
+      setIsCopied(true);
+      if (addToast) {
+        addToast('SUCCESS', 'Copied for AI Models', 'Quant telemetry & trade journal report copied to clipboard. Ready to paste in ChatGPT, Claude, Gemini, or DeepSeek.');
+      }
+      setTimeout(() => setIsCopied(false), 3000);
+    } catch (err) {
+      console.error('Failed to copy to clipboard', err);
+    }
+  };
+
+  const saveAiReportToProjectDisk = async () => {
+    setIsSavingDisk(true);
+    try {
+      const res = await fetch('/api/data-files/save-markdown-disk', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        if (addToast) {
+          addToast('SUCCESS', 'Saved to Repository Disk', 'Saved TRADE_JOURNAL_AI_AUDIT.md & ENGINE_TELEMETRY.txt to disk. Ready to commit to GitHub.');
+        }
+      }
+    } catch (err) {
+      console.error('Failed to save to disk', err);
+    } finally {
+      setIsSavingDisk(false);
+    }
+  };
+
+  const downloadAiMarkdown = (format: 'md' | 'txt') => {
+    const url = `/api/data-files/export-markdown?download=true`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = format === 'md' ? 'TRADE_JOURNAL_AI_AUDIT.md' : 'ENGINE_TELEMETRY.txt';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    if (addToast) {
+      addToast('INFO', 'AI Audit Exported', `Downloaded ${a.download} for AI model analysis.`);
     }
   };
 
@@ -269,6 +336,18 @@ export const DataFilesLogbook: React.FC<DataFilesLogbookProps> = ({
             >
               <Download size={13} />
               <span>File Exports ({summaryData?.files?.length || 6})</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('AI_CONSULTATION')}
+              className={`px-3 py-1.5 rounded-lg font-black text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center space-x-1.5 border ${
+                activeTab === 'AI_CONSULTATION'
+                  ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-black border-amber-300 shadow-lg'
+                  : 'bg-amber-950/40 text-amber-300 border-amber-500/40 hover:bg-amber-900/50'
+              }`}
+            >
+              <Bot size={13} className={activeTab === 'AI_CONSULTATION' ? 'text-black' : 'text-amber-400'} />
+              <span>AI Models & GitHub Export (.md / .txt)</span>
             </button>
           </div>
 
@@ -777,6 +856,85 @@ export const DataFilesLogbook: React.FC<DataFilesLogbookProps> = ({
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 7: AI CONSULTATION & GITHUB MARKDOWN EXPORT */}
+          {activeTab === 'AI_CONSULTATION' && (
+            <div className="space-y-4">
+              {/* Action Banner */}
+              <div className="p-4 bg-gradient-to-r from-amber-950/40 via-orange-950/30 to-slate-900 border border-amber-500/50 rounded-xl space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center space-x-2.5">
+                    <div className="p-2 bg-amber-500/20 rounded-lg text-amber-400">
+                      <Bot size={20} />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-amber-300">
+                        AI Model Consultation & GitHub Telemetry Log Export
+                      </h3>
+                      <p className="text-xs text-slate-300">
+                        Export full system performance, order logs, journal lessons, and rejection audits in structured Markdown / Plain Text format.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center space-x-2 flex-wrap gap-1.5">
+                    <button
+                      onClick={copyMarkdownToClipboard}
+                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-black font-black text-xs rounded-lg flex items-center space-x-1.5 shadow cursor-pointer transition-transform active:scale-95"
+                    >
+                      {isCopied ? <Check size={14} /> : <Copy size={14} />}
+                      <span>{isCopied ? 'Copied to Clipboard!' : 'Copy for AI Prompts'}</span>
+                    </button>
+
+                    <button
+                      onClick={() => downloadAiMarkdown('md')}
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-lg flex items-center space-x-1.5 cursor-pointer shadow"
+                    >
+                      <FileText size={14} />
+                      <span>Download .MD (GitHub)</span>
+                    </button>
+
+                    <button
+                      onClick={() => downloadAiMarkdown('txt')}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-lg flex items-center space-x-1.5 cursor-pointer border border-slate-600"
+                    >
+                      <Download size={14} />
+                      <span>Download .TXT</span>
+                    </button>
+
+                    <button
+                      onClick={saveAiReportToProjectDisk}
+                      disabled={isSavingDisk}
+                      className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs rounded-lg flex items-center space-x-1.5 cursor-pointer border border-emerald-500 shadow"
+                    >
+                      <Save size={14} className={isSavingDisk ? 'animate-spin' : ''} />
+                      <span>{isSavingDisk ? 'Saving...' : 'Save to Project Disk'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-black/40 p-2.5 rounded-lg border border-amber-500/20 text-[11px] text-slate-300 flex items-center space-x-2">
+                  <Github size={15} className="text-white shrink-0" />
+                  <span>
+                    <strong>GitHub Ready:</strong> You can upload <code className="text-amber-300 font-mono bg-black/60 px-1 py-0.5 rounded">TRADE_JOURNAL_AI_AUDIT.md</code> directly to your GitHub repo, or paste it into ChatGPT, Claude, Gemini, or DeepSeek to ask quant architecture and strategy evaluation questions.
+                  </span>
+                </div>
+              </div>
+
+              {/* Live Preview Box */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <span className="font-bold text-slate-300">Live Report Preview (Plain Text / Markdown):</span>
+                  <span className="font-mono text-[11px]">{markdownReport ? `${markdownReport.length} characters` : 'Loading...'}</span>
+                </div>
+
+                <div className="bg-[#0b0f19] border border-slate-800 rounded-xl p-4 max-h-96 overflow-y-auto font-mono text-xs text-slate-200 leading-relaxed whitespace-pre-wrap select-all shadow-inner">
+                  {markdownReport || 'Loading AI Consultation Report... Click refresh or copy above.'}
+                </div>
               </div>
             </div>
           )}

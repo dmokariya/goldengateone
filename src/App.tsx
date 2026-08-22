@@ -10,7 +10,7 @@ import {
 } from './types';
 import { generateLiveSignals, getOrCreateSignalForSymbol, generateFreshRecalibratedSignal, evaluateContractQuantMetrics, scanGoldenFunnelUniverse } from './utils/quantEngine';
 import { recordClosedTradeToJournal, getQuantTradeJournal } from './utils/quantMemory';
-import { lookupLiveQuote, calculateRealtimePnL, evaluateRiskGuardianExit } from './utils/quoteLookup';
+import { lookupLiveQuote, calculateRealtimePnL, evaluateRiskGuardianExit, calculateDynamicShadowMetrics } from './utils/quoteLookup';
 import { ZerodhaConnectionHeader } from './components/ZerodhaConnectionHeader';
 import { ContractCatalog } from './components/ContractCatalog';
 import { QuickSelectRibbon } from './components/QuickSelectRibbon';
@@ -337,15 +337,48 @@ export default function App() {
         setPositions((prev) =>
           prev.map((p) => {
             const q = lookupLiveQuote(p.symbol, p.tradingsymbol, data.quotes);
-            if (q && typeof q.lastPrice === 'number' && p.status === 'OPEN') {
+            const isLtpAvail = !!(q && typeof q.lastPrice === 'number' && q.lastPrice > 0 && q.isLtpAvailable !== false);
+            if (isLtpAvail && p.status === 'OPEN') {
               const livePx = q.lastPrice;
-              const { pnlVal, pnlPct } = calculateRealtimePnL(p.entryPrice, livePx, p.quantity, p.direction);
+              const quoteTs = q.timestampMs || Date.now();
+              const quoteAgeSec = +((Date.now() - quoteTs) / 1000).toFixed(1);
+              const isStale = quoteAgeSec > 3.0;
+              const shadowMetrics = calculateDynamicShadowMetrics(
+                {
+                  direction: p.direction,
+                  entryPrice: p.entryPrice,
+                  quantity: p.quantity,
+                  stopLossPrice: p.stopLossPrice,
+                  targetPrice: p.targetPrice,
+                  highestPriceReached: p.highestPriceReached,
+                  lowestPriceReached: p.lowestPriceReached,
+                  openedAtMs: p.openedAtMs
+                },
+                livePx,
+                quoteTs
+              );
+
               return {
                 ...p,
                 currentPrice: livePx,
-                highestPriceReached: Math.max(p.highestPriceReached || p.entryPrice, livePx),
-                unrealizedPnL: pnlVal,
-                unrealizedPnLPct: pnlPct
+                highestPriceReached: shadowMetrics.highestPriceReached,
+                lowestPriceReached: shadowMetrics.lowestPriceReached,
+                unrealizedPnL: shadowMetrics.unrealizedPnL,
+                unrealizedPnLPct: shadowMetrics.unrealizedPnLPct,
+                pnlInR: shadowMetrics.pnlInR,
+                mfe: shadowMetrics.mfe,
+                mae: shadowMetrics.mae,
+                distanceToSL: shadowMetrics.distanceToSL,
+                distanceToTarget: shadowMetrics.distanceToTarget,
+                durationFormatted: shadowMetrics.durationFormatted,
+                isLtpAvailable: true,
+                isStale
+              };
+            } else if (p.status === 'OPEN') {
+              return {
+                ...p,
+                isLtpAvailable: false,
+                isStale: true
               };
             }
             return p;
@@ -356,7 +389,8 @@ export default function App() {
         setOrderHistory((prev) =>
           prev.map((ord) => {
             const q = lookupLiveQuote(ord.symbol, ord.tradingsymbol, data.quotes);
-            if (q && typeof q.lastPrice === 'number') {
+            const isLtpAvail = !!(q && typeof q.lastPrice === 'number' && q.lastPrice > 0 && q.isLtpAvailable !== false);
+            if (isLtpAvail) {
               const livePx = q.lastPrice;
               const { pnlVal, pnlPct } = calculateRealtimePnL(ord.price, livePx, ord.quantity, ord.side);
               return {
@@ -444,7 +478,15 @@ export default function App() {
   // Execute Shadow Paper Trade (Zero Risk Sandbox Mode with Live LTP)
   const handleExecuteSignalShadow = async (signal: LiveTradeSignal) => {
     const q = lookupLiveQuote(signal.symbol, signal.zerodhaPayload?.tradingsymbol, quotes);
-    const currentLtp = q?.lastPrice ?? signal.currentLtp ?? signal.entryPrice;
+    const isLtpAvail = !!(q && typeof q.lastPrice === 'number' && q.lastPrice > 0 && q.isLtpAvailable !== false);
+
+    if (!isLtpAvail) {
+      triggerUserFeedback(`⛔ Execution Blocked (Fail-Closed): Real Zerodha LTP is unavailable for ${signal.symbol}. Trade entry blocked.`, true);
+      addToast('ERROR', 'Trade Blocked (Fail-Closed)', `Verified Zerodha quote missing for ${signal.symbol}.`);
+      return;
+    }
+
+    const currentLtp = q.lastPrice;
     const quantity = signal.zerodhaPayload?.quantity || 25;
     const shadowOrderId = `SHD_${Date.now()}`;
     const timestamp = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
@@ -482,6 +524,7 @@ export default function App() {
       entryPrice: currentLtp,
       currentPrice: currentLtp,
       highestPriceReached: currentLtp,
+      lowestPriceReached: currentLtp,
       stopLossPrice: slPrice,
       targetPrice: tgPrice,
       trailingStopLossPrice: slPrice,
@@ -489,10 +532,18 @@ export default function App() {
       status: 'OPEN',
       unrealizedPnL: 0,
       unrealizedPnLPct: 0,
+      pnlInR: 0,
+      mfe: 0,
+      mae: 0,
+      distanceToSL: +(Math.abs(currentLtp - slPrice)).toFixed(2),
+      distanceToTarget: +(Math.abs(tgPrice - currentLtp)).toFixed(2),
       timestamp,
       openedAtMs: Date.now(),
       holdingTimeMins: 0,
-      maxAllowedMins: 12
+      maxAllowedMins: 12,
+      durationFormatted: '00:00',
+      isLtpAvailable: true,
+      isStale: false
     };
 
     setPositions((prev) => [newPos, ...prev]);
@@ -522,7 +573,12 @@ export default function App() {
 
       openPositions.forEach((pos) => {
         const q = lookupLiveQuote(pos.symbol, pos.tradingsymbol, quotes);
-        const livePrice = q?.lastPrice ?? pos.currentPrice;
+        const isLtpAvail = !!(q && typeof q.lastPrice === 'number' && q.lastPrice > 0 && q.isLtpAvailable !== false);
+        
+        // Fail Closed: If real Zerodha quote is missing, freeze risk guardian evaluation
+        if (!isLtpAvail) return;
+
+        const livePrice = q.lastPrice;
 
         // Calculate holding time
         const holdingMins = pos.openedAtMs ? Math.floor((Date.now() - pos.openedAtMs) / 60000) : (pos.holdingTimeMins || 0);
@@ -2210,7 +2266,7 @@ export default function App() {
         onSwitchToShadow={() => handleToggleTradingMode('SHADOW')}
         zerodhaUser={zerodhaCreds.userLoginId}
         isZerodhaConnected={zerodhaCreds.isConnected}
-        activePositionsCount={activePositions.length}
+        activePositionsCount={positions.filter((p) => p.status === 'OPEN').length}
       />
 
       {/* 🚀 Persistent Bottom-Right Toast Notification Tray for Errors, Status Checks & Click Feedback */}

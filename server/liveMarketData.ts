@@ -110,151 +110,34 @@ export interface LiveMarketQuote {
   oi: number;
   depth: any;
   timestampMs: number;
-  source: 'ZERODHA_KITE_LIVE' | 'REALTIME_PUBLIC_FEED' | 'CALIBRATED_LIVE_ENGINE';
+  source: 'ZERODHA_KITE_LIVE' | 'UNAVAILABLE';
+  isLtpAvailable?: boolean;
 }
 
-const BASELINE_SPOTS: Record<string, { price: number; name: string }> = {
-  'NIFTY 50': { price: 24850, name: 'NIFTY 50' },
-  'NIFTY': { price: 24850, name: 'NIFTY 50' },
-  'NIFTY BANK': { price: 51250, name: 'NIFTY BANK' },
-  'BANKNIFTY': { price: 51250, name: 'NIFTY BANK' },
-  'FINNIFTY': { price: 23820, name: 'NIFTY FIN SERVICE' },
-  'NIFTY FIN SERVICE': { price: 23820, name: 'NIFTY FIN SERVICE' },
-  'SENSEX': { price: 81200, name: 'SENSEX' },
-  'INDIA VIX': { price: 13.85, name: 'INDIA VIX' },
-  'RELIANCE': { price: 2980, name: 'Reliance Industries' },
-  'HDFCBANK': { price: 1660, name: 'HDFC Bank' },
-  'ICICIBANK': { price: 1210, name: 'ICICI Bank' },
-  'INFY': { price: 1870, name: 'Infosys' },
-  'TCS': { price: 4250, name: 'Tata Consultancy Services' },
-  'SBIN': { price: 815, name: 'State Bank of India' },
-  'TATAMOTORS': { price: 1020, name: 'Tata Motors' },
-  'BAJFINANCE': { price: 6950, name: 'Bajaj Finance' },
-  'LT': { price: 3620, name: 'Larsen & Toubro' },
-  'BHARTIARTL': { price: 1490, name: 'Bharti Airtel' },
-  'AXISBANK': { price: 1190, name: 'Axis Bank' },
-  'MARUTI': { price: 12400, name: 'Maruti Suzuki' },
-  'ITC': { price: 495, name: 'ITC Ltd' },
-  'SUNPHARMA': { price: 1780, name: 'Sun Pharma' },
-  'M&M': { price: 2820, name: 'Mahindra & Mahindra' },
-  'TATASTEEL': { price: 155, name: 'Tata Steel' },
-  'KOTAKBANK': { price: 1780, name: 'Kotak Mahindra Bank' },
-  'HINDALCO': { price: 690, name: 'Hindalco' },
-  'TITAN': { price: 3540, name: 'Titan Company' },
-  'NTPC': { price: 410, name: 'NTPC Ltd' },
-  'POWERGRID': { price: 335, name: 'Power Grid Corp' },
-  'ADANIENT': { price: 3050, name: 'Adani Enterprises' },
-  'COALINDIA': { price: 510, name: 'Coal India' },
-  'WIPRO': { price: 530, name: 'Wipro' }
-};
-
-// Dynamic drift simulation for live market movement when between external queries
-let lastUpdateTime = Date.now();
-const liveSpotCache: Record<string, number> = {};
-
-// Initialize cache with realistic spot baselines
-for (const [k, v] of Object.entries(BASELINE_SPOTS)) {
-  liveSpotCache[k] = v.price;
-}
-
-// Yahoo Finance symbol mapping
-const YAHOO_SYMBOLS: Record<string, string> = {
-  'NIFTY 50': '%5ENSEI',
-  'NIFTY BANK': '%5ENSEBANK',
-  'SENSEX': '%5EBSESN',
-  'INDIA VIX': '%5EINDIAVIX',
-  'RELIANCE': 'RELIANCE.NS',
-  'HDFCBANK': 'HDFCBANK.NS',
-  'ICICIBANK': 'ICICIBANK.NS',
-  'INFY': 'INFY.NS',
-  'TCS': 'TCS.NS',
-  'SBIN': 'SBIN.NS',
-  'TATAMOTORS': 'TATAMOTORS.NS',
-  'BAJFINANCE': 'BAJFINANCE.NS',
-  'LT': 'LT.NS',
-  'BHARTIARTL': 'BHARTIARTL.NS',
-  'AXISBANK': 'AXISBANK.NS',
-  'MARUTI': 'MARUTI.NS',
-  'ITC': 'ITC.NS',
-  'SUNPHARMA': 'SUNPHARMA.NS',
-  'M&M': 'M%26M.NS',
-  'TATASTEEL': 'TATASTEEL.NS',
-  'KOTAKBANK': 'KOTAKBANK.NS',
-  'HINDALCO': 'HINDALCO.NS',
-  'TITAN': 'TITAN.NS'
-};
-
-let lastYahooFetchTime = 0;
+// Live Spot Cache strictly populated from verified Zerodha Kite quotes
+const liveSpotCache: Record<string, { price: number; timestampMs: number }> = {};
 
 /**
- * Periodically attempts to query real-time market data from Yahoo Finance
+ * Updates the live spot cache directly from verified Zerodha Kite quotes.
  */
-export async function refreshLiveSpotPrices(): Promise<void> {
-  const now = Date.now();
-  if (now - lastYahooFetchTime < 15000) {
-    // Return early if fetched recently
-    return;
-  }
-  lastYahooFetchTime = now;
-
-  try {
-    const symbols = ['%5ENSEI', '%5ENSEBANK', 'RELIANCE.NS', 'HDFCBANK.NS', 'TCS.NS', 'INFY.NS', 'ICICIBANK.NS'];
-    for (const sym of symbols) {
-      try {
-        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1m&range=1d`;
-        const res = await fetch(url, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-          signal: AbortSignal.timeout(3000)
-        });
-        if (res.ok) {
-          const json = await res.json();
-          const meta = json?.chart?.result?.[0]?.meta;
-          const regPrice = meta?.regularMarketPrice || meta?.chartPreviousClose;
-          if (regPrice && regPrice > 0) {
-            if (sym === '%5ENSEI') {
-              liveSpotCache['NIFTY 50'] = regPrice;
-              liveSpotCache['NIFTY'] = regPrice;
-            } else if (sym === '%5ENSEBANK') {
-              liveSpotCache['NIFTY BANK'] = regPrice;
-              liveSpotCache['BANKNIFTY'] = regPrice;
-            } else if (sym === 'RELIANCE.NS') {
-              liveSpotCache['RELIANCE'] = regPrice;
-            } else if (sym === 'HDFCBANK.NS') {
-              liveSpotCache['HDFCBANK'] = regPrice;
-            } else if (sym === 'TCS.NS') {
-              liveSpotCache['TCS'] = regPrice;
-            } else if (sym === 'INFY.NS') {
-              liveSpotCache['INFY'] = regPrice;
-            } else if (sym === 'ICICIBANK.NS') {
-              liveSpotCache['ICICIBANK'] = regPrice;
-            }
-          }
-        }
-      } catch {
-        // Ignore individual symbol network errors
-      }
-    }
-  } catch (err) {
-    // Keep fallback cache
+export function updateLiveSpotFromKite(symbol: string, price: number, timestampMs: number = Date.now()): void {
+  if (price > 0) {
+    const norm = symbol.toUpperCase().trim();
+    liveSpotCache[norm] = { price, timestampMs };
   }
 }
 
 /**
- * Returns the current live spot price for any stock or index.
+ * Returns the current live spot price for any stock or index IF present in verified Zerodha cache.
+ * Returns null if no live Zerodha quote exists (Fail closed policy).
  */
-export function getLiveSpot(symbol: string): number {
+export function getLiveSpot(symbol: string): number | null {
   const norm = symbol.toUpperCase().trim();
-  if (liveSpotCache[norm]) return liveSpotCache[norm];
-  if (norm.includes('BANKNIFTY') || norm.includes('NIFTY BANK')) return liveSpotCache['NIFTY BANK'] || 51250;
-  if (norm.includes('FINNIFTY') || norm.includes('NIFTY FIN')) return liveSpotCache['FINNIFTY'] || 23820;
-  if (norm.includes('SENSEX')) return liveSpotCache['SENSEX'] || 81200;
-  if (norm.includes('NIFTY')) return liveSpotCache['NIFTY 50'] || 24850;
-
-  for (const [k, v] of Object.entries(liveSpotCache)) {
-    if (norm.startsWith(k)) return v;
+  const cached = liveSpotCache[norm];
+  if (cached && cached.price > 0 && Date.now() - cached.timestampMs < 10000) {
+    return cached.price;
   }
-
-  return BASELINE_SPOTS[norm]?.price || 24850;
+  return null;
 }
 
 /**
@@ -305,16 +188,17 @@ export function parseOptionSymbol(symbol: string): {
 }
 
 /**
- * Calculates dynamic real-time Black-Scholes price for an option.
- * Guaranteed to match real market pricing (e.g. ₹133 for NIFTY 24200 CE if spot is ~24280).
+ * Calculates theoretical Black-Scholes Greeks and theoretical fair value.
+ * STRICTLY for theoretical Greeks/EV calculation ONLY — NEVER substituted as market LTP.
  */
-export function computeRealtimeOptionPrice(
-  underlying: string,
+export function computeOptionTheoreticalGreeks(
+  spotPrice: number,
   strike: number,
   optionType: 'CE' | 'PE',
-  dteDays: number = 3
+  dteDays: number = 3,
+  volatility: number = 0.15
 ): {
-  price: number;
+  theoreticalPrice: number;
   delta: number;
   gamma: number;
   thetaPerDay: number;
@@ -322,47 +206,39 @@ export function computeRealtimeOptionPrice(
   iv: number;
   moneyness: string;
 } {
-  const spot = getLiveSpot(underlying);
   const isCall = optionType === 'CE';
   const timeToExpiryYears = Math.max(0.001, dteDays / 365.25);
   const riskFreeRate = 0.065;
 
-  // Real market IV based on asset class
-  let iv = 0.138; // 13.8% for Index
-  if (underlying.includes('BANKNIFTY')) iv = 0.155;
-  else if (!['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX'].includes(underlying)) iv = 0.24; // 24% for Equities
-
   const bs = calculateBlackScholes({
-    spot,
-    strike: strike || spot,
+    spot: spotPrice,
+    strike: strike || spotPrice,
     timeToExpiryYears,
     riskFreeRate,
-    iv,
+    iv: volatility,
     isCall
   });
 
-  const intrinsic = isCall ? Math.max(0, spot - strike) : Math.max(0, strike - spot);
-  const theoretical = bs.theoreticalPrice;
-  const finalPrice = Math.max(0.50, +(Math.max(theoretical, intrinsic + 0.50)).toFixed(2));
-
-  const moneynessDist = isCall ? (spot - strike) : (strike - spot);
   let moneyness = 'ATM';
-  if (moneynessDist > 50) moneyness = 'ITM';
-  else if (moneynessDist < -50) moneyness = 'OTM';
+  const dist = isCall ? spotPrice - strike : strike - spotPrice;
+  if (dist > spotPrice * 0.008) moneyness = 'ITM';
+  else if (dist < -spotPrice * 0.008) moneyness = 'OTM';
 
   return {
-    price: finalPrice,
+    theoreticalPrice: bs.theoreticalPrice,
     delta: bs.delta,
     gamma: bs.gamma,
     thetaPerDay: bs.thetaPerDay,
     vega: bs.vega,
-    iv,
+    iv: +(volatility * 100).toFixed(1),
     moneyness
   };
 }
 
 /**
- * Builds a full live market quotes dictionary for requested symbols.
+ * Builds live quotes dictionary from verified Zerodha Kite responses.
+ * STRICT FAIL-CLOSED POLICY: Only genuine Zerodha Kite quotes are returned as LIVE.
+ * Missing quotes are flagged as UNAVAILABLE with lastPrice: 0.
  */
 export function buildComprehensiveQuotes(
   requestedSymbols: string[],
@@ -374,36 +250,55 @@ export function buildComprehensiveQuotes(
   const resultQuotes: Record<string, LiveMarketQuote> = {};
   const spotIndices: Record<string, number> = {};
 
-  // 1. Populate Spot Indices
-  for (const [k, v] of Object.entries(liveSpotCache)) {
-    const kiteItem = kiteQuotes[`NSE:${k}`] || kiteQuotes[`BSE:${k}`] || kiteQuotes[k];
-    const spotPrice = kiteItem?.last_price || v;
-    liveSpotCache[k] = spotPrice;
+  // Extract Spot Indices directly from verified Kite quotes
+  const spotMapping: Record<string, string[]> = {
+    'NIFTY 50': ['NSE:NIFTY 50', 'NIFTY 50', 'NSE:NIFTY50', 'NIFTY', 'NSE:NIFTY'],
+    'NIFTY BANK': ['NSE:NIFTY BANK', 'NIFTY BANK', 'NSE:BANKNIFTY', 'BANKNIFTY'],
+    'FINNIFTY': ['NSE:FINNIFTY', 'FINNIFTY', 'NSE:NIFTY FIN SERVICE', 'NIFTY FIN SERVICE'],
+    'SENSEX': ['BSE:SENSEX', 'SENSEX', 'BSE:SENSEX 50'],
+    'INDIA VIX': ['NSE:INDIA VIX', 'INDIA VIX', 'INDIAVIX']
+  };
 
-    if (['NIFTY 50', 'NIFTY BANK', 'FINNIFTY', 'SENSEX', 'INDIA VIX'].includes(k)) {
-      spotIndices[k] = spotPrice;
+  for (const [canonicalName, aliasKeys] of Object.entries(spotMapping)) {
+    let spotQuote: any = null;
+    for (const key of aliasKeys) {
+      if (kiteQuotes[key] && (kiteQuotes[key].last_price > 0 || kiteQuotes[key].lastPrice > 0)) {
+        spotQuote = kiteQuotes[key];
+        break;
+      }
     }
 
-    const netChange = +(spotPrice * 0.0035).toFixed(2);
-    const changePct = 0.35;
+    if (spotQuote) {
+      const px = spotQuote.last_price || spotQuote.lastPrice;
+      const closePx = spotQuote.ohlc?.close || px;
+      const netChange = +(px - closePx).toFixed(2);
+      const changePct = closePx > 0 ? +((netChange / closePx) * 100).toFixed(2) : 0;
+      const quoteObj: LiveMarketQuote = {
+        lastPrice: px,
+        netChange,
+        changePct,
+        high: spotQuote.ohlc?.high || px,
+        low: spotQuote.ohlc?.low || px,
+        close: closePx,
+        open: spotQuote.ohlc?.open || px,
+        volume: spotQuote.volume || 0,
+        oi: spotQuote.oi || 0,
+        depth: spotQuote.depth || null,
+        timestampMs: Date.now(),
+        source: 'ZERODHA_KITE_LIVE',
+        isLtpAvailable: true
+      };
 
-    resultQuotes[k] = {
-      lastPrice: spotPrice,
-      netChange,
-      changePct,
-      high: +(spotPrice * 1.006).toFixed(2),
-      low: +(spotPrice * 0.994).toFixed(2),
-      close: +(spotPrice - netChange).toFixed(2),
-      open: +(spotPrice * 0.998).toFixed(2),
-      volume: 1250000,
-      oi: 0,
-      depth: null,
-      timestampMs: Date.now(),
-      source: kiteItem ? 'ZERODHA_KITE_LIVE' : 'REALTIME_PUBLIC_FEED'
-    };
+      resultQuotes[canonicalName] = quoteObj;
+      aliasKeys.forEach((k) => {
+        resultQuotes[k] = quoteObj;
+      });
+      spotIndices[canonicalName] = px;
+      updateLiveSpotFromKite(canonicalName, px);
+    }
   }
 
-  // 2. Populate Requested Option and Stock Symbols
+  // Populate Requested Option and Stock Symbols
   for (const sym of requestedSymbols) {
     const cleanSym = sym.trim();
     if (!cleanSym) continue;
@@ -411,79 +306,65 @@ export function buildComprehensiveQuotes(
     const noSpaceSym = cleanSym.replace(/\s+/g, '');
     const nfoPrefixed = `NFO:${noSpaceSym}`;
     const nsePrefixed = `NSE:${noSpaceSym}`;
+    const bsePrefixed = `BSE:${noSpaceSym}`;
+    const bfoPrefixed = `BFO:${noSpaceSym}`;
 
-    // Check Kite first
-    const kiteMatch = kiteQuotes[cleanSym] || kiteQuotes[noSpaceSym] || kiteQuotes[nfoPrefixed] || kiteQuotes[nsePrefixed];
+    // Find in Kite Quotes
+    const kiteMatch =
+      kiteQuotes[cleanSym] ||
+      kiteQuotes[noSpaceSym] ||
+      kiteQuotes[nfoPrefixed] ||
+      kiteQuotes[nsePrefixed] ||
+      kiteQuotes[bsePrefixed] ||
+      kiteQuotes[bfoPrefixed];
+
     if (kiteMatch && (kiteMatch.last_price > 0 || kiteMatch.lastPrice > 0)) {
       const px = kiteMatch.last_price || kiteMatch.lastPrice;
+      const closePx = kiteMatch.ohlc?.close || px;
+      const netChange = +(px - closePx).toFixed(2);
+      const changePct = closePx > 0 ? +((netChange / closePx) * 100).toFixed(2) : 0;
+
       const quoteObj: LiveMarketQuote = {
         lastPrice: px,
-        netChange: +(px - (kiteMatch.ohlc?.close || px)).toFixed(2),
-        changePct: kiteMatch.ohlc?.close ? +(((px - kiteMatch.ohlc.close) / kiteMatch.ohlc.close) * 100).toFixed(2) : (kiteMatch.changePct || 0),
+        netChange,
+        changePct,
         high: kiteMatch.ohlc?.high || px,
         low: kiteMatch.ohlc?.low || px,
-        close: kiteMatch.ohlc?.close || px,
+        close: closePx,
         open: kiteMatch.ohlc?.open || px,
-        volume: kiteMatch.volume || 15000,
-        oi: kiteMatch.oi || 50000,
+        volume: kiteMatch.volume || 0,
+        oi: kiteMatch.oi || 0,
         depth: kiteMatch.depth || null,
         timestampMs: Date.now(),
-        source: 'ZERODHA_KITE_LIVE'
+        source: 'ZERODHA_KITE_LIVE',
+        isLtpAvailable: true
       };
 
       resultQuotes[cleanSym] = quoteObj;
       resultQuotes[noSpaceSym] = quoteObj;
       resultQuotes[nfoPrefixed] = quoteObj;
       resultQuotes[nsePrefixed] = quoteObj;
-      continue;
-    }
-
-    // Parse option details
-    const parsed = parseOptionSymbol(cleanSym);
-    if (parsed.isOption && parsed.strike > 0) {
-      const optCalc = computeRealtimeOptionPrice(parsed.underlying, parsed.strike, parsed.optionType);
-      const netChg = +(optCalc.price * 0.08).toFixed(2);
-      const quoteObj: LiveMarketQuote = {
-        lastPrice: optCalc.price,
-        netChange: netChg,
-        changePct: 8.5,
-        high: +(optCalc.price * 1.15).toFixed(2),
-        low: +(optCalc.price * 0.88).toFixed(2),
-        close: +(optCalc.price - netChg).toFixed(2),
-        open: +(optCalc.price * 0.94).toFixed(2),
-        volume: 48500,
-        oi: 125000,
-        depth: null,
-        timestampMs: Date.now(),
-        source: 'CALIBRATED_LIVE_ENGINE'
-      };
-
-      resultQuotes[cleanSym] = quoteObj;
-      resultQuotes[noSpaceSym] = quoteObj;
-      resultQuotes[nfoPrefixed] = quoteObj;
-      resultQuotes[`${parsed.underlying} ${parsed.strike} ${parsed.optionType}`] = quoteObj;
+      updateLiveSpotFromKite(cleanSym, px);
     } else {
-      // Direct stock / equity
-      const spot = getLiveSpot(cleanSym);
-      const netChg = +(spot * 0.004).toFixed(2);
-      const quoteObj: LiveMarketQuote = {
-        lastPrice: spot,
-        netChange: netChg,
-        changePct: 0.40,
-        high: +(spot * 1.008).toFixed(2),
-        low: +(spot * 0.992).toFixed(2),
-        close: +(spot - netChg).toFixed(2),
-        open: +(spot * 0.997).toFixed(2),
-        volume: 850000,
+      // FAIL CLOSED: Quote is unavailable from Zerodha
+      const unavailableQuote: LiveMarketQuote = {
+        lastPrice: 0,
+        netChange: 0,
+        changePct: 0,
+        high: 0,
+        low: 0,
+        close: 0,
+        open: 0,
+        volume: 0,
         oi: 0,
         depth: null,
-        timestampMs: Date.now(),
-        source: 'REALTIME_PUBLIC_FEED'
+        timestampMs: 0,
+        source: 'UNAVAILABLE',
+        isLtpAvailable: false
       };
 
-      resultQuotes[cleanSym] = quoteObj;
-      resultQuotes[noSpaceSym] = quoteObj;
-      resultQuotes[nsePrefixed] = quoteObj;
+      resultQuotes[cleanSym] = unavailableQuote;
+      resultQuotes[noSpaceSym] = unavailableQuote;
     }
   }
 

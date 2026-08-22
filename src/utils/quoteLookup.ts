@@ -16,6 +16,7 @@ export interface NormalizedQuote {
   source?: string;
   foundKey?: string;
   timestampMs?: number;
+  isLtpAvailable?: boolean;
 }
 
 /**
@@ -171,6 +172,119 @@ export function calculateRealtimePnL(
 }
 
 /**
+ * Calculates complete live shadow trade metrics directly from Zerodha LTP.
+ * Never uses theoretical prices, target prices, or cached entry prices for current MTM.
+ */
+export function calculateDynamicShadowMetrics(
+  pos: {
+    direction: 'BUY' | 'SELL';
+    entryPrice: number;
+    quantity: number;
+    stopLossPrice?: number;
+    targetPrice?: number;
+    highestPriceReached?: number;
+    lowestPriceReached?: number;
+    openedAtMs?: number;
+  },
+  liveLtp: number,
+  quoteTimestampMs: number = Date.now()
+): {
+  currentPrice: number;
+  unrealizedPnL: number;
+  unrealizedPnLPct: number;
+  pnlInR: number;
+  highestPriceReached: number;
+  lowestPriceReached: number;
+  mfe: number;
+  mfePct: number;
+  mfeR: number;
+  mae: number;
+  maePct: number;
+  maeR: number;
+  distanceToSL: number;
+  distanceToTarget: number;
+  holdingTimeMins: number;
+  holdingTimeSecs: number;
+  durationFormatted: string;
+  quoteAgeSeconds: number;
+  isStale: boolean;
+  isLtpAvailable: boolean;
+} {
+  const isBuy = pos.direction === 'BUY';
+  const entry = pos.entryPrice > 0 ? pos.entryPrice : liveLtp;
+  const currentPrice = liveLtp > 0 ? liveLtp : entry;
+  const isLtpAvailable = liveLtp > 0;
+
+  // Realized / Unrealized MTM
+  const diff = isBuy ? currentPrice - entry : entry - currentPrice;
+  const unrealizedPnL = +(diff * pos.quantity).toFixed(2);
+  const unrealizedPnLPct = entry > 0 ? +((diff / entry) * 100).toFixed(2) : 0;
+
+  // Risk Budget & R-Multiple
+  const stopLoss = pos.stopLossPrice && pos.stopLossPrice > 0 ? pos.stopLossPrice : (isBuy ? entry * 0.9 : entry * 1.1);
+  const riskPerUnit = Math.max(0.1, Math.abs(entry - stopLoss));
+  const riskBudgetINR = Math.max(1, riskPerUnit * pos.quantity);
+  const pnlInR = +(unrealizedPnL / riskBudgetINR).toFixed(2);
+
+  // Peak and Trough Extremes (MFE / MAE)
+  const highestPriceReached = Math.max(pos.highestPriceReached || entry, currentPrice);
+  const lowestPriceReached = Math.min(pos.lowestPriceReached || entry, currentPrice);
+
+  // MFE (Max Favourable Excursion)
+  const mfeDiff = isBuy ? highestPriceReached - entry : entry - lowestPriceReached;
+  const mfe = Math.max(0, +(mfeDiff * pos.quantity).toFixed(2));
+  const mfePct = entry > 0 ? Math.max(0, +((mfeDiff / entry) * 100).toFixed(2)) : 0;
+  const mfeR = Math.max(0, +(mfe / riskBudgetINR).toFixed(2));
+
+  // MAE (Max Adverse Excursion)
+  const maeDiff = isBuy ? entry - lowestPriceReached : highestPriceReached - entry;
+  const mae = -Math.max(0, +(maeDiff * pos.quantity).toFixed(2));
+  const maePct = entry > 0 ? -Math.max(0, +((maeDiff / entry) * 100).toFixed(2)) : 0;
+  const maeR = -Math.max(0, +(Math.abs(mae) / riskBudgetINR).toFixed(2));
+
+  // Distances to SL and Target
+  const distanceToSL = +(Math.abs(currentPrice - (pos.stopLossPrice || stopLoss))).toFixed(2);
+  const distanceToTarget = pos.targetPrice ? +(Math.abs(pos.targetPrice - currentPrice)).toFixed(2) : 0;
+
+  // Live Trade Duration
+  const now = Date.now();
+  const opened = pos.openedAtMs || now;
+  const totalElapsedSecs = Math.max(0, Math.floor((now - opened) / 1000));
+  const holdingTimeMins = +(totalElapsedSecs / 60).toFixed(1);
+  const holdingTimeSecs = totalElapsedSecs;
+  const minsPart = Math.floor(totalElapsedSecs / 60);
+  const secsPart = totalElapsedSecs % 60;
+  const durationFormatted = `${minsPart.toString().padStart(2, '0')}:${secsPart.toString().padStart(2, '0')}`;
+
+  // Quote Freshness
+  const quoteAgeSeconds = quoteTimestampMs > 0 ? +((now - quoteTimestampMs) / 1000).toFixed(1) : 999;
+  const isStale = quoteAgeSeconds > 3.0 || !isLtpAvailable;
+
+  return {
+    currentPrice,
+    unrealizedPnL,
+    unrealizedPnLPct,
+    pnlInR,
+    highestPriceReached,
+    lowestPriceReached,
+    mfe,
+    mfePct,
+    mfeR,
+    mae,
+    maePct,
+    maeR,
+    distanceToSL,
+    distanceToTarget,
+    holdingTimeMins,
+    holdingTimeSecs,
+    durationFormatted,
+    quoteAgeSeconds,
+    isStale,
+    isLtpAvailable
+  };
+}
+
+/**
  * Validates whether an active position has breached Stop Loss, Trailing Stop Loss, or Target.
  */
 export function evaluateRiskGuardianExit(
@@ -193,8 +307,18 @@ export function evaluateRiskGuardianExit(
   description: string;
   suggestedTSL: number;
 } {
+  // Fail Closed Policy: If real Zerodha LTP is unavailable, freeze risk evaluation to prevent spurious exits
+  if (!liveLtp || liveLtp <= 0) {
+    return {
+      shouldExit: false,
+      exitReason: null,
+      description: `LTP UNAVAILABLE (Fail Closed): Verified Zerodha quote missing; risk evaluation frozen.`,
+      suggestedTSL: pos.trailingStopLossPrice || pos.stopLossPrice
+    };
+  }
+
   const isBuy = pos.direction === 'BUY';
-  const effectivePrice = liveLtp > 0 ? liveLtp : pos.currentPrice;
+  const effectivePrice = liveLtp;
 
   // Dynamic Trailing Stop Loss calculation
   const highestPrice = Math.max(pos.highestPriceReached || pos.entryPrice, effectivePrice);

@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ActivePosition, TradeOrder } from '../types';
 import { SquareOffNotificationBanner } from './SquareOffNotificationBanner';
-import { lookupLiveQuote, calculateRealtimePnL } from '../utils/quoteLookup';
-import { Briefcase, TrendingUp, TrendingDown, ArrowRightLeft, XCircle, CheckCircle2, History, RefreshCw, Clock, ShieldCheck, Zap, AlertCircle, Shield, Play } from 'lucide-react';
+import { lookupLiveQuote, calculateRealtimePnL, calculateDynamicShadowMetrics } from '../utils/quoteLookup';
+import { Briefcase, TrendingUp, TrendingDown, ArrowRightLeft, XCircle, CheckCircle2, History, RefreshCw, Clock, ShieldCheck, Zap, AlertCircle, Shield, Play, Timer, Activity } from 'lucide-react';
 
 interface PositionsTrackerProps {
   positions: ActivePosition[];
@@ -34,6 +34,13 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
   const [activeTab, setActiveTab] = useState<'POSITIONS' | 'ORDER_HISTORY'>('POSITIONS');
   const [globalTimeStopEnabled, setGlobalTimeStopEnabled] = useState(true);
   const [globalTrailingStopEnabled, setGlobalTrailingStopEnabled] = useState(true);
+  const [tickerNow, setTickerNow] = useState(Date.now());
+
+  // 1-second interval to keep live duration and quote age ticking smoothly
+  useEffect(() => {
+    const timer = setInterval(() => setTickerNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Filter open positions
   const openPositions = positions.filter((p) => p.status === 'OPEN');
@@ -45,7 +52,7 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
 
   openPositions.forEach((pos) => {
     const q = lookupLiveQuote(pos.symbol, pos.tradingsymbol, quotes);
-    const livePrice = q?.lastPrice ?? pos.currentPrice;
+    const livePrice = q && q.lastPrice > 0 ? q.lastPrice : pos.currentPrice;
     const posVal = pos.entryPrice * pos.quantity;
     totalInvestedVal += posVal;
 
@@ -57,8 +64,10 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
 
   // Simulation test handlers for user to test TSL and Time Stop in real-time
   const handleSimulatePriceChange = (pos: ActivePosition, pctChange: number) => {
-    const newPrice = +(pos.currentPrice * (1 + pctChange / 100)).toFixed(2);
+    const currentPx = pos.currentPrice > 0 ? pos.currentPrice : pos.entryPrice;
+    const newPrice = +(currentPx * (1 + pctChange / 100)).toFixed(2);
     const newHighest = Math.max(pos.highestPriceReached || pos.entryPrice, newPrice);
+    const newLowest = Math.min(pos.lowestPriceReached || pos.entryPrice, newPrice);
     const trailPct = pos.trailingDistancePct ?? 5.0;
     const computedTSL = +(newHighest * (1 - trailPct / 100)).toFixed(2);
     const currentTSL = pos.trailingStopLossPrice ?? +(pos.entryPrice * (1 - trailPct / 100)).toFixed(2);
@@ -68,6 +77,7 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
       onUpdatePositionParams(pos.id, {
         currentPrice: newPrice,
         highestPriceReached: newHighest,
+        lowestPriceReached: newLowest,
         trailingStopLossPrice: updatedTSL
       });
     }
@@ -115,13 +125,13 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
           </div>
           <div>
             <h2 className="text-sm font-bold text-white uppercase tracking-wider flex items-center space-x-2">
-              <span>Zerodha Live Positions & Order Desk</span>
+              <span>Zerodha Live Positions & Shadow Desk</span>
               <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                 ACTIVE
               </span>
             </h2>
             <p className="text-[10px] text-gray-400">
-              Track open holdings, real-time P&L, Dynamic Trailing Stop-Loss & Time-Stop Auto-Exits
+              Live Zerodha tick feeds • Dynamic Unrealized P&L (₹, %, R) • MFE & MAE • Continuous SL/Target tracking
             </p>
           </div>
         </div>
@@ -142,7 +152,7 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
           {openPositions.length > 0 && onClearAllPositions && (
             <button
               onClick={() => {
-                if (window.confirm('Clear all local positions from the tracking desk? This removes local simulated positions.')) {
+                if (window.confirm('Clear all local positions from the tracking desk? This resets local simulated positions.')) {
                   onClearAllPositions();
                 }
               }}
@@ -190,10 +200,10 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#1F2937] pb-2">
           <div className="flex items-center space-x-2">
             <Zap className="w-4 h-4 text-amber-400 animate-pulse" />
-            <span className="font-bold text-white uppercase text-[11px]">Automated Risk & Exit Management Workers</span>
+            <span className="font-bold text-white uppercase text-[11px]">Real-Time Risk Guardian & Trailing Stop Workers</span>
           </div>
           <span className="text-[9px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-            ● WORKER THREAD ONLINE (3s CYCLE)
+            ● ZERODHA QUOTE FEED LIVE
           </span>
         </div>
 
@@ -204,7 +214,7 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
               <Clock className="w-3.5 h-3.5 text-amber-400" />
               <div>
                 <span className="font-bold text-gray-200 block">Auto Time-Stop Worker (12 Mins)</span>
-                <span className="text-[8.5px] text-gray-400">Exits stagnant positions (-0.8% to +0.8% PnL) to avoid Theta decay</span>
+                <span className="text-[8.5px] text-gray-400">Exits stagnant positions (-0.8% to +0.8% PnL) to protect against Theta decay</span>
               </div>
             </div>
             <button
@@ -283,7 +293,7 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
               <XCircle className="w-8 h-8 text-gray-600 mx-auto" />
               <p className="text-gray-400 font-bold text-xs uppercase">No Active Open Positions</p>
               <p className="text-[10px] text-gray-500 max-w-sm mx-auto">
-                Execute trade signals from the Contract Catalog or AI Signal Scanner above to open live positions. Executed positions will appear here with dynamic trailing stop-losses, live timer exit rules, and instant square-off controls.
+                Execute trade signals from the Contract Catalog or AI Signal Scanner to open live shadow positions. Executed positions will update dynamically from live Zerodha quotes with continuous P&L, MFE, MAE, R-multiples, and auto-exit rules.
               </p>
             </div>
           ) : (
@@ -293,25 +303,45 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
                   <tr className="bg-[#0A0B0E] text-gray-400 text-[10px] uppercase border-b border-[#1F2937]">
                     <th className="p-2.5">Symbol</th>
                     <th className="p-2.5">Side & Qty</th>
-                    <th className="p-2.5">Entry / Peak Price</th>
-                    <th className="p-2.5">Current LTP & P&L</th>
-                    <th className="p-2.5">Dynamic Trailing SL (5%)</th>
-                    <th className="p-2.5">Time-Stop & Timer (12m)</th>
-                    <th className="p-2.5 text-right">Actions / Sim Test</th>
+                    <th className="p-2.5">Entry / Target / SL</th>
+                    <th className="p-2.5">Live Zerodha LTP</th>
+                    <th className="p-2.5">Unrealized P&L (₹ / % / R)</th>
+                    <th className="p-2.5">MFE / MAE Excursions</th>
+                    <th className="p-2.5">Distance to Target / SL</th>
+                    <th className="p-2.5">Duration</th>
+                    <th className="p-2.5 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#1F2937] text-[11px]">
                   {openPositions.map((pos) => {
                     const q = lookupLiveQuote(pos.symbol, pos.tradingsymbol, quotes);
-                    const currentLtp = q?.lastPrice ?? pos.currentPrice;
-                    const { pnlVal, pnlPct } = calculateRealtimePnL(pos.entryPrice, currentLtp, pos.quantity, pos.direction);
+                    const rawLtp = q?.lastPrice ?? 0;
+                    const metrics = calculateDynamicShadowMetrics(
+                      {
+                        direction: pos.direction,
+                        entryPrice: pos.entryPrice,
+                        quantity: pos.quantity,
+                        stopLossPrice: pos.stopLossPrice,
+                        targetPrice: pos.targetPrice,
+                        highestPriceReached: pos.highestPriceReached,
+                        lowestPriceReached: pos.lowestPriceReached,
+                        openedAtMs: pos.openedAtMs
+                      },
+                      rawLtp,
+                      q?.timestampMs || Date.now()
+                    );
 
-                    const peakPrice = Math.max(pos.highestPriceReached || pos.entryPrice, currentLtp);
+                    const currentLtp = metrics.currentPrice;
+                    const pnlVal = metrics.unrealizedPnL;
+                    const pnlPct = metrics.unrealizedPnLPct;
+                    const pnlInR = metrics.pnlInR;
+
+                    const peakPrice = metrics.highestPriceReached;
                     const trailPct = pos.trailingDistancePct ?? 5.0;
                     const computedTSL = +(peakPrice * (1 - trailPct / 100)).toFixed(2);
                     const tslPrice = Math.max(pos.trailingStopLossPrice || +(pos.entryPrice * (1 - trailPct / 100)).toFixed(2), computedTSL);
 
-                    const elapsedMins = pos.holdingTimeMins || 0;
+                    const elapsedMins = metrics.holdingTimeMins;
                     const maxAllowedMins = pos.maxAllowedMins || 12;
                     const isStagnant = Math.abs(pnlPct) <= 0.8;
                     const isTimeWarning = elapsedMins >= 8 && isStagnant;
@@ -320,7 +350,14 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
                       <tr key={pos.id} className="hover:bg-[#1F2937]/30 transition-colors">
                         {/* Symbol */}
                         <td className="p-2.5 font-bold text-white">
-                          <div>{pos.symbol}</div>
+                          <div className="flex items-center space-x-1.5">
+                            <span>{pos.symbol}</span>
+                            {pos.mode && (
+                              <span className={`text-[8px] px-1 py-0.2 rounded font-black ${pos.mode === 'SHADOW' ? 'bg-blue-900/70 text-blue-300 border border-blue-500/30' : 'bg-emerald-900/70 text-emerald-300 border border-emerald-500/30'}`}>
+                                {pos.mode}
+                              </span>
+                            )}
+                          </div>
                           <div className="text-[9px] text-gray-500 font-normal">{pos.tradingsymbol} • {pos.exchange}</div>
                         </td>
 
@@ -338,76 +375,92 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
                           </div>
                         </td>
 
-                        {/* Entry / Peak Price */}
+                        {/* Entry / Target / SL */}
                         <td className="p-2.5">
-                          <div className="font-bold text-gray-300">₹{pos.entryPrice.toFixed(2)}</div>
-                          <div className="text-[9.5px] text-emerald-400 font-semibold flex items-center space-x-1">
-                            <span>Peak: ₹{peakPrice.toFixed(2)}</span>
-                            {peakPrice > pos.entryPrice && <TrendingUp className="w-3 h-3 text-emerald-400" />}
+                          <div className="font-bold text-gray-200">Entry: ₹{pos.entryPrice.toFixed(2)}</div>
+                          <div className="text-[9px] text-gray-400 flex items-center space-x-2 mt-0.5">
+                            <span className="text-emerald-400">TG: ₹{(pos.targetPrice || pos.entryPrice * 1.2).toFixed(2)}</span>
+                            <span className="text-rose-400">SL: ₹{(pos.stopLossPrice || pos.entryPrice * 0.85).toFixed(2)}</span>
                           </div>
                         </td>
 
-                        {/* Current LTP & P&L */}
+                        {/* Live Zerodha LTP */}
                         <td className="p-2.5">
-                          <div className="flex items-center space-x-1.5 font-extrabold text-blue-300">
-                            <span className="relative flex h-2 w-2">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                            </span>
-                            <span className="text-xs font-mono text-cyan-300">₹{(currentLtp > 0 ? currentLtp : pos.entryPrice).toFixed(2)}</span>
-                            <span className="text-[8.5px] px-1 py-0.2 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 font-bold animate-pulse">
-                              LIVE
-                            </span>
-                          </div>
-                          <div className={`font-extrabold text-[10px] flex items-center space-x-1 mt-0.5 ${pnlVal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {pnlVal >= 0 ? <TrendingUp className="w-3 h-3 shrink-0" /> : <TrendingDown className="w-3 h-3 shrink-0" />}
+                          {metrics.isLtpAvailable ? (
+                            <div>
+                              <div className="flex items-center space-x-1.5 font-extrabold text-blue-300">
+                                <span className="relative flex h-2 w-2">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                                </span>
+                                <span className="text-xs font-mono text-cyan-300">₹{currentLtp.toFixed(2)}</span>
+                                <span className="text-[8.5px] px-1 py-0.2 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 font-bold">
+                                  LIVE
+                                </span>
+                              </div>
+                              <div className="text-[8.5px] text-gray-400 mt-0.5 flex items-center space-x-1">
+                                <span>Age: {metrics.quoteAgeSeconds}s</span>
+                                {metrics.isStale && (
+                                  <span className="text-amber-400 font-bold px-1 rounded bg-amber-950/60 border border-amber-500/30">
+                                    STALE
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            <div>
+                              <div className="text-rose-400 font-bold text-[10px] flex items-center space-x-1 bg-rose-950/50 px-1.5 py-0.5 rounded border border-rose-500/40 w-fit">
+                                <AlertCircle className="w-3 h-3 text-rose-400" />
+                                <span>LTP UNAVAILABLE</span>
+                              </div>
+                              <div className="text-[8.5px] text-gray-500 mt-0.5 font-bold">
+                                P&L Frozen (Fail Closed)
+                              </div>
+                            </div>
+                          )}
+                        </td>
+
+                        {/* Unrealized P&L (₹ / % / R) */}
+                        <td className="p-2.5">
+                          <div className={`font-black text-xs flex items-center space-x-1 ${pnlVal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {pnlVal >= 0 ? <TrendingUp className="w-3.5 h-3.5 shrink-0" /> : <TrendingDown className="w-3.5 h-3.5 shrink-0" />}
                             <span>{pnlVal >= 0 ? '+' : ''}₹{pnlVal.toFixed(2)} ({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%)</span>
                           </div>
-                        </td>
-
-                        {/* Dynamic Trailing Stop Loss */}
-                        <td className="p-2.5">
-                          <div className="flex flex-col space-y-1">
-                            <div className="flex items-center space-x-1 font-bold text-purple-300">
-                              <Shield className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                              <span>₹{tslPrice.toFixed(2)}</span>
-                              <span className="text-[8.5px] text-gray-400">(-{trailPct}%)</span>
-                            </div>
-                            <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded border inline-block w-fit ${
-                              tslPrice > pos.entryPrice
-                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                                : 'bg-purple-500/20 text-purple-300 border-purple-500/30'
-                            }`}>
-                              {tslPrice > pos.entryPrice ? '🟢 PROFIT LOCKED IN' : '🛡️ TSL PROTECTING'}
+                          <div className="text-[9.5px] font-bold mt-0.5">
+                            <span className={`px-1.5 py-0.2 rounded ${pnlInR >= 0 ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-500/30' : 'bg-rose-950/60 text-rose-300 border border-rose-500/30'}`}>
+                              {pnlInR >= 0 ? '+' : ''}{pnlInR.toFixed(2)} R
                             </span>
                           </div>
                         </td>
 
-                        {/* Time-Stop & Timer */}
+                        {/* MFE / MAE Excursions */}
                         <td className="p-2.5">
-                          <div className="flex flex-col space-y-1">
-                            <div className="flex items-center space-x-1 text-amber-300 font-bold text-[10.5px]">
-                              <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                              <span>{elapsedMins}m / {maxAllowedMins}m Limit</span>
-                            </div>
-                            {/* Holding progress bar */}
-                            <div className="w-24 bg-[#0A0B0E] rounded-full h-1.5 overflow-hidden border border-[#1F2937]">
-                              <div
-                                className={`h-full transition-all duration-300 ${
-                                  elapsedMins >= maxAllowedMins ? 'bg-rose-500' : isTimeWarning ? 'bg-amber-400 animate-pulse' : 'bg-blue-500'
-                                }`}
-                                style={{ width: `${Math.min(100, (elapsedMins / maxAllowedMins) * 100)}%` }}
-                              ></div>
-                            </div>
-                            <span className={`text-[8px] font-bold px-1 py-0.5 rounded border inline-block w-fit ${
-                              elapsedMins >= maxAllowedMins
-                                ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
-                                : isTimeWarning
-                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
-                                : 'bg-gray-800 text-gray-300 border-gray-700'
-                            }`}>
-                              {elapsedMins >= maxAllowedMins ? '🚨 TIME-STOP BREACHED' : isTimeWarning ? '⚠️ STAGNANT DECAY WARNING' : '⏱️ NORMAL HOLDING'}
-                            </span>
+                          <div className="text-[9.5px] font-bold text-emerald-400 flex items-center space-x-1">
+                            <span>MFE: +₹{metrics.mfe.toFixed(2)} (+{metrics.mfePct.toFixed(1)}% | +{metrics.mfeR.toFixed(2)}R)</span>
+                          </div>
+                          <div className="text-[9.5px] font-bold text-rose-400 flex items-center space-x-1 mt-0.5">
+                            <span>MAE: -₹{Math.abs(metrics.mae).toFixed(2)} ({metrics.maePct.toFixed(1)}% | {metrics.maeR.toFixed(2)}R)</span>
+                          </div>
+                        </td>
+
+                        {/* Distance to Target / SL */}
+                        <td className="p-2.5 text-[10px]">
+                          <div className="text-emerald-300 font-medium">
+                            To Target: ₹{metrics.distanceToTarget.toFixed(2)}
+                          </div>
+                          <div className="text-rose-300 font-medium mt-0.5">
+                            To SL: ₹{metrics.distanceToSL.toFixed(2)}
+                          </div>
+                        </td>
+
+                        {/* Duration */}
+                        <td className="p-2.5">
+                          <div className="flex items-center space-x-1 text-amber-300 font-bold text-[10px]">
+                            <Timer className="w-3 h-3 text-amber-400 shrink-0" />
+                            <span>{metrics.durationFormatted}</span>
+                          </div>
+                          <div className="text-[8.5px] text-gray-500">
+                            {elapsedMins}m / {maxAllowedMins}m limit
                           </div>
                         </td>
 
@@ -417,7 +470,7 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
                             <button
                               onClick={() => onExitPosition({ ...pos, currentPrice: currentLtp, unrealizedPnL: pnlVal, unrealizedPnLPct: pnlPct }, 'MANUAL_EXIT')}
                               className="bg-red-600/90 hover:bg-red-500 text-white font-bold px-2.5 py-1 rounded text-[9.5px] uppercase flex items-center space-x-1 shadow transition-all active:scale-95 border border-red-400/30"
-                              title="Send live Square-off order to Zerodha"
+                              title="Send live Square-off order"
                             >
                               <ArrowRightLeft className="w-3 h-3" />
                               <span>EXIT</span>
@@ -500,7 +553,7 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
                 <tbody className="divide-y divide-[#1F2937] text-[11px]">
                   {orders.map((ord) => {
                     const q = lookupLiveQuote(ord.symbol, ord.tradingsymbol, quotes);
-                    const ltp = q?.lastPrice ?? ord.currentLtp ?? ord.price;
+                    const ltp = q && q.lastPrice > 0 ? q.lastPrice : ord.price;
                     const { pnlVal, pnlPct } = calculateRealtimePnL(ord.price, ltp, ord.quantity, ord.side);
 
                     return (
@@ -530,13 +583,17 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
                         <td className="p-2.5 font-bold text-gray-200">{ord.quantity} Qty</td>
                         <td className="p-2.5 text-gray-300 font-bold">₹{ord.price.toFixed(2)}</td>
                         <td className="p-2.5 text-blue-300 font-bold font-mono">
-                          <div className="flex items-center space-x-1">
-                            <span className="relative flex h-1.5 w-1.5">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-                              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-500"></span>
-                            </span>
-                            <span>{ltp > 0 ? `₹${ltp.toFixed(2)}` : `₹${ord.price.toFixed(2)}`}</span>
-                          </div>
+                          {q && q.lastPrice > 0 ? (
+                            <div className="flex items-center space-x-1">
+                              <span className="relative flex h-1.5 w-1.5">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-500"></span>
+                              </span>
+                              <span>₹{ltp.toFixed(2)}</span>
+                            </div>
+                          ) : (
+                            <span className="text-gray-500">₹{ord.price.toFixed(2)}</span>
+                          )}
                         </td>
                         <td className="p-2.5 font-mono">
                           <span className={`font-black ${pnlVal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -566,4 +623,5 @@ export const PositionsTracker: React.FC<PositionsTrackerProps> = ({
     </div>
   );
 };
+
 

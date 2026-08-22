@@ -551,6 +551,19 @@ export interface ActivePosition {
   stopLossPrice?: number;
   unrealizedPnL: number;
   unrealizedPnLPct: number;
+  pnlInR?: number;
+  mfe?: number;
+  mfePct?: number;
+  mfeR?: number;
+  mae?: number;
+  maePct?: number;
+  maeR?: number;
+  distanceToSL?: number;
+  distanceToTarget?: number;
+  quoteTimestampMs?: number;
+  quoteAgeSeconds?: number;
+  isLtpAvailable?: boolean;
+  isStale?: boolean;
   timestamp: string;
   openedAtMs?: number;
   status: 'OPEN' | 'CLOSED';
@@ -560,10 +573,13 @@ export interface ActivePosition {
   winProbabilityPct?: number;
   timeStopRule?: string;
   holdingTimeMins?: number;
+  holdingTimeSecs?: number;
+  durationFormatted?: string;
   maxAllowedMins?: number;
   autoTimeStopEnabled?: boolean;
   autoTrailingStopEnabled?: boolean;
-  exitReason?: 'MANUAL_EXIT' | 'TIME_STOP_AUTO_EXIT' | 'TRAILING_STOP_AUTO_EXIT' | 'TARGET_HIT_AUTO_EXIT' | 'STOP_LOSS_AUTO_EXIT';
+  exitReason?: string;
+  product?: string;
 }
 
 // -------------------------------------------------------------------------------------------------
